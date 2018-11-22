@@ -41,7 +41,9 @@ export class ClientWorker extends Base implements IClientWorker {
     PUBLISH_ALL: `/v1/cs/configs`,
     REMOVE: `/v1/cs/configs`,
     REMOVE_ALL: `/v1/cs/configs`,
+    LISTENER: '/v1/cs/configs/listener'
   };
+  protected listenerDataKey = 'Listening-Configs';
 
   constructor(options) {
     super(options);
@@ -203,13 +205,15 @@ export class ClientWorker extends Base implements IClientWorker {
         probeUpdate.push(md5, LINE_SEPARATOR);
       }
     }
-    const content = await this.httpAgent.request('/config.co', {
+
+    const postData = {};
+    postData[this.listenerDataKey] = probeUpdate.join('');
+
+    const content = await this.httpAgent.request(this.apiRoutePath.LISTENER, {
       method: 'POST',
-      data: {
-        'Probe-Modify-Request': probeUpdate.join(''),
-      },
+      data: postData,
       headers: {
-        longPullingTimeout: '30000',
+        'Long-Pulling-Timeout': '30000',
       },
       timeout: 40000, // 超时时间比longPullingTimeout稍大一点，避免主动超时异常
     });
@@ -388,7 +392,7 @@ export class ClientWorker extends Base implements IClientWorker {
 
   async publishAggr(dataId, group, datumId, content) {
     const appName = this.appName;
-    await this.httpAgent.request('/datum.do?method=addDatum', {
+    await this.httpAgent.request(this.apiRoutePath.PUBLISH_ALL, {
       method: 'POST',
       data: {
         dataId,
@@ -403,7 +407,7 @@ export class ClientWorker extends Base implements IClientWorker {
   }
 
   async removeAggr(dataId, group, datumId) {
-    await this.httpAgent.request('/datum.do?method=deleteDatum', {
+    await this.httpAgent.request(this.apiRoutePath.REMOVE_ALL, {
       method: 'POST',
       data: {
         dataId,
@@ -423,7 +427,7 @@ export class ClientWorker extends Base implements IClientWorker {
    */
   async batchGetConfig(dataIds, group) {
     const dataIdStr = dataIds.join(WORD_SEPARATOR);
-    const content = await this.httpAgent.request('/config.co?method=batchGetConfig', {
+    const content = await this.httpAgent.request(this.apiRoutePath.BATCH_GET, {
       method: 'POST',
       data: {
         dataIds: dataIdStr,
@@ -461,7 +465,7 @@ export class ClientWorker extends Base implements IClientWorker {
    */
   async batchQuery(dataIds, group) {
     const dataIdStr = dataIds.join(WORD_SEPARATOR);
-    const content = await this.httpAgent.request('/admin.do?method=batchQuery', {
+    const content = await this.httpAgent.request(this.apiRoutePath.BATCH_QUERY, {
       method: 'POST',
       data: {
         dataIds: dataIdStr,
@@ -477,6 +481,11 @@ export class ClientWorker extends Base implements IClientWorker {
       err.data = content;
       throw err;
     }
+  }
+
+  // for test
+  clearSubscriptions() {
+    this.subscriptions.clear();
   }
 
 }

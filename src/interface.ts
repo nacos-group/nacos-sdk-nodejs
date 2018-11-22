@@ -299,4 +299,5 @@ export interface API_ROUTE {
   PUBLISH_ALL: string;
   REMOVE: string;
   REMOVE_ALL: string;
+  LISTENER: string;
 }

@@ -27,5 +27,5 @@ export function delay(timeout) {
 }
 
 export function createDefaultConfiguration(config: any) {
-  return new Configuration(DEFAULT_OPTIONS).merge(config);
+  return new Configuration(Object.assign({}, DEFAULT_OPTIONS)).merge(config);
 }
