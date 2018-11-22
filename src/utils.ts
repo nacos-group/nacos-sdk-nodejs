@@ -28,7 +28,7 @@ export function encodingParams(data) {
   return qs.stringify(data, sep, eq, {
     encodeURIComponent(str) {
       // diamond server 默认是 GBK 编码
-      return urlencode.encode(str, 'gbk');
+      return urlencode.encode(str, 'utf8');
     },
   });
 }

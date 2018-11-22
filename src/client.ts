@@ -1,64 +1,45 @@
-import {
-  BaseClient, DataClientOptions,
-  DiamondEnvOptions,
-  IDiamondEnv,
-  IServerListManager,
-  ISnapshot,
-  serverListMgrOptions
-} from './interface';
+import { BaseClient, ClientOptions, IClientWorker, IServerListManager, ISnapshot, } from './interface';
 import { ServerListManager } from './server_list_mgr';
-import { DiamondEnv } from './diamond_env';
+import { ClientWorker } from './client_worker';
 import { Snapshot } from './snapshot';
-import * as urllib from 'urllib';
-import { CURRENT_UNIT } from './const';
+import { CURRENT_UNIT, DEFAULT_OPTIONS } from './const';
 import { checkParameters } from './utils';
+import { HttpAgent } from './http_agent';
+import { Configuration } from './configuration';
+import * as assert from 'assert';
 
 const Base = require('sdk-base');
-const path = require('path');
-const osenv = require('osenv');
-const assert = require('assert');
 
-// 默认参数
-const DEFAULT_OPTIONS = {
-  appKey: '',
-  serverPort: 8080,
-  requestTimeout: 6000,
-  refreshInterval: 30000,
-  cacheDir: path.join(osenv.home(), '.node-diamond-client-cache'),
-  httpclient: urllib,
-  ssl: true,
-};
 
 export class DataClient extends Base implements BaseClient {
 
-  private clients: Map<string, IDiamondEnv>;
+  private clients: Map<string, IClientWorker>;
+  private configuration;
   protected snapshot: ISnapshot;
   protected serverMgr: IServerListManager;
+  protected httpAgent;
 
-  constructor(options: DataClientOptions) {
-    assert(options.endpoint, '[AcmClient] options.endpoint is required');
-    assert(options.namespace, '[AcmClient] options.namespace is required');
-    assert(options.accessKey, '[AcmClient] options.accessKey is required');
-    assert(options.secretKey, '[AcmClient] options.secretKey is required');
+  constructor(options: ClientOptions) {
+    assert(options.endpoint, '[Client] options.endpoint is required');
 
     options = Object.assign({}, DEFAULT_OPTIONS, options);
     super(options);
+    this.configuration = this.options.configuration = new Configuration(options);
 
-    this.snapshot = this.getSnapshot(options);
-    this.serverMgr = this.getServerListManager(options);
+    this.snapshot = this.getSnapshot();
+    this.serverMgr = this.getServerListManager();
+    this.httpAgent = new HttpAgent(this.configuration);
+
+    this.configuration.merge({
+      snapshot: this.snapshot,
+      serverMgr: this.serverMgr,
+      httpAgent: this.httpAgent,
+    });
 
     this.clients = new Map();
     (<any>this.snapshot).on('error', err => this.throwError(err));
     (<any>this.serverMgr).on('error', err => this.throwError(err));
     this.ready(true);
-  }
-
-  /**
-   * HTTP 请求客户端
-   * @property {Urllib} DiamondClient#urllib
-   */
-  get httpclient() {
-    return this.options.httpclient || urllib;
   }
 
   get appName() {
@@ -95,10 +76,10 @@ export class DataClient extends Base implements BaseClient {
    * @return {DiamondClient} self
    */
   subscribe(info, listener) {
-    const {dataId, group} = info;
+    const { dataId, group } = info;
     checkParameters(dataId, group);
     const client = this.getClient(info);
-    client.subscribe({dataId, group}, listener);
+    client.subscribe({ dataId, group }, listener);
     return this;
   }
 
@@ -112,10 +93,10 @@ export class DataClient extends Base implements BaseClient {
    * @return {DiamondClient} self
    */
   unSubscribe(info, listener) {
-    const {dataId, group} = info;
+    const { dataId, group } = info;
     checkParameters(dataId, group);
     const client = this.getClient(info);
-    client.unSubscribe({dataId, group}, listener);
+    client.unSubscribe({ dataId, group }, listener);
     return this;
   }
 
@@ -210,7 +191,7 @@ export class DataClient extends Base implements BaseClient {
   async publishToAllUnit(dataId, group, content) {
     checkParameters(dataId, group);
     const units = await this.getAllUnits();
-    await units.map(unit => this.getClient({unit}).publishSingle(dataId, group, content));
+    await units.map(unit => this.getClient({ unit }).publishSingle(dataId, group, content));
     return true;
   }
 
@@ -223,7 +204,7 @@ export class DataClient extends Base implements BaseClient {
   async removeToAllUnit(dataId, group) {
     checkParameters(dataId, group);
     const units = await this.getAllUnits();
-    await units.map(unit => this.getClient({unit}).remove(dataId, group));
+    await units.map(unit => this.getClient({ unit }).remove(dataId, group));
     return true;
   }
 
@@ -247,17 +228,15 @@ export class DataClient extends Base implements BaseClient {
     this.clients.clear();
   }
 
-  protected getClient(options: { unit?: string; group?; dataId? } = {}): IDiamondEnv {
+  protected getClient(options: { unit?: string; group?; dataId? } = {}): IClientWorker {
     if (!options.unit) {
       options.unit = CURRENT_UNIT;
     }
-    const {unit} = options;
+    const { unit } = options;
     let client = this.clients.get(unit);
     if (!client) {
-      client = this.getDiamondEnv(Object.assign({}, this.options, {
-        unit,
-        serverMgr: this.serverMgr,
-        snapshot: this.snapshot,
+      client = this.getClientWorker(Object.assign({}, {
+        configuration: this.configuration.attach({ unit })
       }));
       client.on('error', err => {
         this.throwError(err);
@@ -283,15 +262,16 @@ export class DataClient extends Base implements BaseClient {
    * 供其他包覆盖
    * @param options
    */
-  protected getDiamondEnv(options: DiamondEnvOptions): IDiamondEnv {
-    return new DiamondEnv(options);
+  protected getClientWorker(options): IClientWorker {
+    return new ClientWorker(options);
   }
 
-  protected getServerListManager(options: serverListMgrOptions): IServerListManager {
-    return new ServerListManager(options);
+  protected getServerListManager(): IServerListManager {
+    return new ServerListManager(this.options);
   }
 
-  protected getSnapshot(options): ISnapshot {
-    return new Snapshot(options);
+  protected getSnapshot(): ISnapshot {
+    return new Snapshot(this.options);
   }
+
 }

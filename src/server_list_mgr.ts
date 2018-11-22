@@ -1,27 +1,28 @@
 import { Snapshot } from './snapshot';
-import { DiamondError, IServerListManager, serverListMgrOptions } from './interface';
+import { ClientOptionKeys, DiamondError, IConfiguration, IServerListManager } from './interface';
 import { CURRENT_UNIT } from './const';
+import * as path from 'path';
 
 const Base = require('sdk-base');
-const debug = require('debug')('diamond-client');
-const path = require('path');
-const assert = require('assert');
 const gather = require('co-gather');
-const Constants = require('./const');
 const { random } = require('utility');
 const { sleep } = require('mz-modules');
 
-const DEFAULT_OPTIONS = {
-  endpoint: 'acm.aliyun.com',
-  refreshInterval: 30 * 1000, // 30s
-};
+interface ServerCacheData {
+  hosts: [ string ];
+  index: number;
+}
 
 export class ServerListManager extends Base implements IServerListManager {
 
-  private isSync;
-  private isClosed;
-  private serverListCache;
-  private currentUnit;
+  private isSync = false;
+  private isClosed = false;
+  private serverListCache: Map<string, ServerCacheData> = new Map(); // unit => { hosts: [ addr1, addr2 ], index }
+  private currentUnit = CURRENT_UNIT;
+  private isDirectMode = false;
+  protected loggerDomain = 'Nacos';
+  protected debug = require('debug')(`${this.loggerDomain}:${process.pid}:mgr`);
+  private currentServerAddrMap = new Map();
 
   /**
    * 服务地址列表管理器
@@ -32,41 +33,62 @@ export class ServerListManager extends Base implements IServerListManager {
    *   - {String} nameServerAddr - 命名服务器地址 `hostname:port`
    * @constructor
    */
-  constructor(options: serverListMgrOptions) {
-    assert(options.httpclient, '[diamond#ServerListManager] options.httpclient is required');
-    options.snapshot = options.snapshot || new Snapshot(options);
-
-    if (options.endpoint) {
-      const temp = options.endpoint.split(':');
-      options.endpoint = temp[ 0 ] + ':' + (temp[ 1 ] || '8080');
-    }
-    super(Object.assign({}, DEFAULT_OPTIONS, options));
-
-    this.isSync = false;
-    this.isClosed = false;
-    this.currentUnit = CURRENT_UNIT;
-    this.serverListCache = new Map(); // unit => { hosts: [ addr1, addr2 ], index }
+  constructor(options) {
+    super(options);
+    this.formatOptions();
     this.syncServers();
     this.ready(true);
   }
 
+  formatOptions() {
+    if (this.configuration.has(ClientOptionKeys.ENDPOINT)) {
+      this.configuration.modify(ClientOptionKeys.ENDPOINT, (endpoint) => {
+        const temp = endpoint.split(':');
+        return temp[ 0 ] + ':' + (temp[ 1 ] || '8080');
+      });
+    }
+
+    if (this.configuration.has(ClientOptionKeys.SERVERADDR)) {
+      this.isDirectMode = true;
+      this.serverListCache.set(CURRENT_UNIT, {
+        hosts: [ this.configuration.get(ClientOptionKeys.SERVERADDR) ],
+        index: 0
+      });
+    }
+  }
+
+  get configuration(): IConfiguration {
+    return this.options.configuration;
+  }
+
   get snapshot() {
-    return this.options.snapshot;
+    if(!this.configuration.has(ClientOptionKeys.SNAPSHOT)) {
+      this.configuration.set(ClientOptionKeys.SNAPSHOT, new Snapshot(this.options));
+    }
+    return this.configuration.get(ClientOptionKeys.SNAPSHOT);
   }
 
   get httpclient() {
-    return this.options.httpclient;
+    return this.configuration.get(ClientOptionKeys.HTTPCLIENT);
   }
 
   get nameServerAddr() {
-    if (this.options.endpoint) {
-      return this.options.endpoint;
+    if (this.configuration.has(ClientOptionKeys.ENDPOINT)) {
+      return this.configuration.get(ClientOptionKeys.ENDPOINT);
     }
-    return this.options.nameServerAddr;
+    return this.configuration.get(ClientOptionKeys.NAMESERVERADDR);
   }
 
   get refreshInterval() {
-    return this.options.refreshInterval;
+    return this.configuration.get(ClientOptionKeys.REFRESH_INTERVAL);
+  }
+
+  get contextPath() {
+    return this.configuration.get(ClientOptionKeys.CONTEXTPATH) || 'nacos';
+  }
+
+  get clusterName() {
+    return this.configuration.get(ClientOptionKeys.CLUSTER_NAME) || 'serverlist';
   }
 
   /**
@@ -80,8 +102,8 @@ export class ServerListManager extends Base implements IServerListManager {
     const res = await this.httpclient.request(url, options);
     const { status, data } = res;
     if (status !== 200) {
-      const err: DiamondError = new Error(`[diamond#ServerListManager] request url: ${url} failed with statusCode: ${status}`);
-      err.name = 'DiamondServerResponseError';
+      const err: DiamondError = new Error(`[${this.loggerDomain}#ServerListManager] request url: ${url} failed with statusCode: ${status}`);
+      err.name = `${this.loggerDomain}ServerResponseError`;
       err.url = url;
       err.params = options;
       err.body = res.data;
@@ -94,39 +116,7 @@ export class ServerListManager extends Base implements IServerListManager {
    * 获取当前机器所在单元
    */
   async getCurrentUnit() {
-    if (!this.currentUnit) {
-      const url = `http://${this.nameServerAddr}/env`;
-      const data = await this.request(url, {
-        timeout: this.options.requestTimeout,
-        dataType: 'text',
-      });
-      const unit = data && data.trim();
-      this.currentUnit = unit;
-    }
     return this.currentUnit;
-  }
-
-  /**
-   * 获取某个单元的地址
-   * @param {String} unit 单元名，默认为当前单元
-   * @return {String} address
-   */
-  async getOne(unit = Constants.CURRENT_UNIT) {
-    let serverData = this.serverListCache.get(unit);
-    // 不存在则先尝试去更新一次
-    if (!serverData) {
-      serverData = await this.fetchServerList(unit);
-    }
-    // 如果还没有，则返回 null
-    if (!serverData || !serverData.hosts.length) {
-      return null;
-    }
-    const choosed = serverData.hosts[ serverData.index ];
-    serverData.index += 1;
-    if (serverData.index >= serverData.hosts.length) {
-      serverData.index = 0;
-    }
-    return choosed;
   }
 
   /**
@@ -134,7 +124,7 @@ export class ServerListManager extends Base implements IServerListManager {
    * @return {void}
    */
   syncServers() {
-    if (this.isSync) {
+    if (this.isSync || this.isDirectMode) {
       return;
     }
     (async () => {
@@ -143,12 +133,12 @@ export class ServerListManager extends Base implements IServerListManager {
         while (!this.isClosed) {
           await sleep(this.refreshInterval);
           const units = Array.from(this.serverListCache.keys());
-          debug('syncServers for units: %j', units);
+          this.debug('syncServers for units: %j', units);
           const results = await gather(units.map(unit => this.fetchServerList(unit)));
           for (let i = 0, len = results.length; i < len; i++) {
             if (results[ i ].isError) {
               const err = new Error(results[ i ].error);
-              err.name = 'DiamondUpdateServersError';
+              err.name = `${this.loggerDomain}UpdateServersError`;
               this.emit('error', err);
             }
           }
@@ -160,23 +150,23 @@ export class ServerListManager extends Base implements IServerListManager {
     })();
   }
 
-  // 获取某个单元的 diamond server 列表
-  async fetchServerList(unit = Constants.CURRENT_UNIT) {
+  // 获取某个单元的 server 列表
+  private async fetchServerList(unit = CURRENT_UNIT) {
     const key = this.formatKey(unit);
     const url = this.getRequestUrl(unit);
     let hosts;
     try {
       let data = await this.request(url, {
-        timeout: this.options.requestTimeout,
+        timeout: this.configuration.get(ClientOptionKeys.REQUEST_TIMEOUT),
         dataType: 'text',
       });
       data = data || '';
       hosts = data.split('\n').map(host => host.trim()).filter(host => !!host);
       const length = hosts.length;
-      debug('got %d hosts, the serverlist is: %j', length, hosts);
+      this.debug('got %d hosts, the serverlist is: %j', length, hosts);
       if (!length) {
-        const err: DiamondError = new Error('[diamond#ServerListManager] Diamond return empty hosts');
-        err.name = 'DiamondServerHostEmptyError';
+        const err: DiamondError = new Error(`[${this.loggerDomain}#ServerListManager] ${this.loggerDomain} return empty hosts`);
+        err.name = `${this.loggerDomain}ServerHostEmptyError`;
         err.unit = unit;
         throw err;
       }
@@ -214,10 +204,8 @@ export class ServerListManager extends Base implements IServerListManager {
   }
 
   // 获取请求 url
-  private getRequestUrl(unit) {
-    return unit === Constants.CURRENT_UNIT ?
-      `http://${this.nameServerAddr}/diamond-server/diamond` :
-      `http://${this.nameServerAddr}/diamond-server/diamond-unit-${unit}?nofix=1`;
+  protected getRequestUrl(unit) {
+    return `http://${this.nameServerAddr}/${this.contextPath}/${this.clusterName}`;
   }
 
   /**
@@ -226,6 +214,34 @@ export class ServerListManager extends Base implements IServerListManager {
    */
   async fetchUnitLists() {
     return [ this.currentUnit ];
+  }
+
+  async updateCurrentServer(unit = CURRENT_UNIT) {
+    if (!this.serverListCache.has(unit)) {
+      await this.fetchServerList(unit);
+    }
+    let serverData = this.serverListCache.get(unit);
+    if (serverData) {
+      let currentHostIndex = serverData.index;
+      if (currentHostIndex >= serverData.hosts.length) {
+        // 超出序号，重头开始循环
+        currentHostIndex = 0;
+      }
+      const currentServer = serverData.hosts[ currentHostIndex++ ];
+      this.currentServerAddrMap.set(unit, currentServer);
+    }
+  }
+
+  /**
+   * 获取某个单元的地址
+   * @param {String} unit 单元名，默认为当前单元
+   * @return {String} address
+   */
+  async getCurrentServerAddr(unit = CURRENT_UNIT) {
+    if (!this.currentServerAddrMap.has(unit)) {
+      await this.updateCurrentServer(unit);
+    }
+    return this.currentServerAddrMap.get(unit);
   }
 
   // for test

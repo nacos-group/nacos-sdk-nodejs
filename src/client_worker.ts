@@ -1,31 +1,22 @@
-import { DiamondEnvOptions, DiamondError, IDiamondEnv, SnapShotData } from './interface';
-import { CURRENT_UNIT, HTTP_CONFLICT, HTTP_NOT_FOUND, HTTP_OK, LINE_SEPARATOR, VERSION, WORD_SEPARATOR } from './const';
-import { encodingParams, getMD5String } from './utils';
+import { ClientOptionKeys, DiamondError, IClientWorker, IConfiguration, SnapShotData } from './interface';
+import { LINE_SEPARATOR, WORD_SEPARATOR } from './const';
+import { getMD5String } from './utils';
 
 const Base = require('sdk-base');
-const debug = require('debug')('diamond-client:diamond_env');
 const co = require('co');
 const path = require('path');
 const is = require('is-type-of');
 const gather = require('co-gather');
-const {sleep} = require('mz-modules');
-const crypto = require('crypto');
+const { sleep } = require('mz-modules');
 
-const DEFAULT_OPTIONS = {
-  serverPort: 8080,
-  refreshInterval: 30 * 1000, // 30s
-  requestTimeout: 5000,
-  unit: CURRENT_UNIT,
-  ssl: true,
-};
+export class ClientWorker extends Base implements IClientWorker {
 
-export class DiamondEnv extends Base implements IDiamondEnv {
-
-  private uuid = Math.random();
+  private uuid = (Math.random() * 1000).toFixed(0);
   private isClose = false;
   private isLongPulling = false;
   private subscriptions = new Map();
-  private currentServer = null;
+  protected loggerDomain = 'Nacos';
+  private debug = require('debug')(`${this.loggerDomain}:${process.pid}:ins-${this.uuid}:client_worker`);
 
   /**
    * Diamond Client.
@@ -38,62 +29,41 @@ export class DiamondEnv extends Base implements IDiamondEnv {
    *  - {Snapshot} snapshot snapshot instance
    * @constructor
    */
-  constructor(options: DiamondEnvOptions = {unit: CURRENT_UNIT}) {
-    super(Object.assign({}, DEFAULT_OPTIONS, options));
+  constructor(options) {
+    super(options);
     // 同一个key可能会被多次订阅，避免不必要的 `warning`
     this.setMaxListeners(100);
     this.ready(true);
-    debug(this.uuid);
+    this.debug('client worker start');
+  }
+
+  get configuration(): IConfiguration {
+    return this.options.configuration;
   }
 
   get appName() {
-    return this.options.appName;
-  }
-
-  get appKey() {
-    return this.options.appKey;
-  }
-
-  get secretKey() {
-    return this.options.secretKey;
+    return this.configuration.get(ClientOptionKeys.APPNAME);
   }
 
   get snapshot() {
-    return this.options.snapshot;
-  }
-
-  get serverMgr() {
-    return this.options.serverMgr;
+    return this.configuration.get(ClientOptionKeys.SNAPSHOT);
   }
 
   get unit() {
-    return this.options.unit;
+    return this.configuration.get(ClientOptionKeys.UNIT);
   }
 
-  /**
-   * HTTP 请求客户端
-   * @property {HttpClient} DiamondEnv#httpclient
-   */
-  get httpclient() {
-    return this.options.httpclient;
+  get httpAgent() {
+    return this.configuration.get(ClientOptionKeys.HTTP_AGENT);
+  }
+
+  get namespace() {
+    return this.configuration.get(ClientOptionKeys.NAMESPACE);
   }
 
   close() {
     this.isClose = true;
     this.removeAllListeners();
-  }
-
-  /**
-   * 更新 当前服务器
-   */
-  async updateCurrentServer() {
-    this.currentServer = await this.serverMgr.getOne(this.unit);
-    if (!this.currentServer) {
-      const err: DiamondError = new Error('[DiamondEnv] Diamond server unavailable');
-      err.name = 'DiamondServerUnavailableError';
-      err.unit = this.unit;
-      throw err;
-    }
   }
 
   /**
@@ -105,7 +75,7 @@ export class DiamondEnv extends Base implements IDiamondEnv {
    * @return {DiamondEnv} self
    */
   subscribe(info, listener) {
-    const {dataId, group} = info;
+    const { dataId, group } = info;
     const key = this.formatKey(info);
     this.on(key, listener);
 
@@ -139,14 +109,14 @@ export class DiamondEnv extends Base implements IDiamondEnv {
    * @return {void}
    */
   private async syncConfigs(list) {
-    const tasks = list.map(({dataId, group}) => this.getConfig(dataId, group));
+    const tasks = list.map(({ dataId, group }) => this.getConfig(dataId, group));
     const results = await gather(tasks, 5);
     for (let i = 0, len = results.length; i < len; i++) {
       const key = this.formatKey(list[ i ]);
       const item = this.subscriptions.get(key);
       const result = results[ i ];
       if (!item) {
-        debug('item %s not exist', key); // maybe removed by user
+        this.debug('item %s not exist', key); // maybe removed by user
         continue;
       }
       if (result.isError) {
@@ -167,98 +137,6 @@ export class DiamondEnv extends Base implements IDiamondEnv {
         // 异步化，避免处理逻辑异常影响到 diamond 内部
         setImmediate(() => this.emit(key, content));
       }
-    }
-  }
-
-  /**
-   * 请求
-   * @param {String} path - 请求 path
-   * @param {Object} [options] - 参数
-   * @return {String} value
-   */
-  async request(path, options: {
-    encode?: boolean;
-    method?: string;
-    data?: any;
-    timeout?: number;
-    headers?: any;
-  } = {}) {
-    // 默认为当前单元
-    const unit = this.unit;
-    const ts = String(Date.now());
-    const {encode = false, method = 'GET', data, timeout = this.options.requestTimeout, headers = {}} = options;
-
-    if (!this.currentServer) {
-      await this.updateCurrentServer();
-    }
-
-    let url = `http://${this.currentServer}:${8080}/diamond-server${path}`;
-
-    if (this.options.ssl) {
-      url = `https://${this.currentServer}:${443}/diamond-server${path}`;
-    }
-
-    debug('request unit: [%s] with url: %s', unit, url);
-    let signStr = data.tenant;
-    if (data.group && data.tenant) {
-      signStr = data.tenant + '+' + data.group;
-    } else if (data.group) {
-      signStr = data.group;
-    }
-
-    const signature = crypto.createHmac('sha1', this.secretKey)
-      .update(signStr + '+' + ts).digest()
-      .toString('base64');
-    // 携带统一的头部信息
-    Object.assign(headers, {
-      'Client-Version': VERSION,
-      'Content-Type': 'application/x-www-form-urlencoded; charset=GBK',
-      'Spas-AccessKey': this.options.accessKey,
-      timeStamp: ts,
-      exConfigInfo: 'true',
-      'Spas-Signature': signature,
-    });
-
-    let requestData = data;
-    if (encode) {
-      requestData = encodingParams(data);
-    }
-    try {
-      const res = await this.httpclient.request(url, {
-        rejectUnauthorized: false,
-        httpsAgent: false,
-        method,
-        data: requestData,
-        dataType: 'text',
-        headers,
-        timeout,
-        secureProtocol: 'TLSv1_2_method',
-      });
-
-      let err;
-      const resData = res.data;
-      debug('%s %s, got %s, body: %j', method, url, res.status, resData);
-      switch (res.status) {
-        case HTTP_OK:
-          return resData;
-        case HTTP_NOT_FOUND:
-          return null;
-        case HTTP_CONFLICT:
-          err = new Error(`[DiamondEnv] Diamond server config being modified concurrently, data: ${JSON.stringify(data)}`);
-          err.name = 'DiamondServerConflictError';
-          throw err;
-        default:
-          err = new Error(`Diamond Server Error Status: ${res.status}, url: ${url}, request data: ${JSON.stringify(data)}, response data: ${resData && resData.toString()}`);
-          err.name = 'DiamondServerResponseError';
-          err.body = res.data;
-          throw err;
-      }
-    } catch (err) {
-      err.url = `${method} ${url}`;
-      err.data = data;
-      err.headers = headers;
-      await this.updateCurrentServer();
-      throw err;
     }
   }
 
@@ -292,15 +170,15 @@ export class DiamondEnv extends Base implements IDiamondEnv {
   }
 
   private async checkServerConfigInfo() {
-    debug('start to check update config list');
+    this.debug('start to check update config list');
     if (this.subscriptions.size === 0) {
       return;
     }
 
     const beginTime = Date.now();
-    const tenant = this.options.namespace;
+    const tenant = this.namespace;
     const probeUpdate = [];
-    for (const {dataId, group, md5} of this.subscriptions.values()) {
+    for (const { dataId, group, md5 } of this.subscriptions.values()) {
       probeUpdate.push(dataId, WORD_SEPARATOR);
       probeUpdate.push(group, WORD_SEPARATOR);
 
@@ -311,7 +189,7 @@ export class DiamondEnv extends Base implements IDiamondEnv {
         probeUpdate.push(md5, LINE_SEPARATOR);
       }
     }
-    const content = await this.request('/config.co', {
+    const content = await this.httpAgent.request('/config.co', {
       method: 'POST',
       data: {
         'Probe-Modify-Request': probeUpdate.join(''),
@@ -321,7 +199,7 @@ export class DiamondEnv extends Base implements IDiamondEnv {
       },
       timeout: 40000, // 超时时间比longPullingTimeout稍大一点，避免主动超时异常
     });
-    debug('long pulling takes %ds', (Date.now() - beginTime) / 1000);
+    this.debug('long pulling takes %ds', (Date.now() - beginTime) / 1000);
     const updateList = this.parseUpdateDataIdResponse(content);
     if (updateList && updateList.length) {
       await this.syncConfigs(updateList);
@@ -388,7 +266,7 @@ export class DiamondEnv extends Base implements IDiamondEnv {
   }
 
   private getSnapshotKey(dataId, group, tenant?) {
-    tenant = tenant || this.options.namespace || 'default_tenant';
+    tenant = tenant || this.namespace || 'default_tenant';
     return path.join('config', this.unit, tenant, group, dataId);
   }
 
@@ -399,15 +277,18 @@ export class DiamondEnv extends Base implements IDiamondEnv {
    * @return {String} value
    */
   async getConfig(dataId, group) {
-    debug('calling getConfig, dataId: %s, group: %s', dataId, group);
+    this.debug('calling getConfig, dataId: %s, group: %s', dataId, group);
     let content;
     const key = this.getSnapshotKey(dataId, group);
+
+    // TODO 优先使用本地配置
+
     try {
-      content = await this.request('/config.co', {
+      content = await this.httpAgent.request('/v1/cs/configs', {
         data: {
           dataId,
           group,
-          tenant: this.options.namespace,
+          tenant: this.namespace,
         },
       });
     } catch (err) {
@@ -439,12 +320,12 @@ export class DiamondEnv extends Base implements IDiamondEnv {
   }
 
   async getAllConfigInfoByTenantInner(pageNo, pageSize) {
-    const ret = await this.request('/basestone.do', {
+    const ret = await this.httpAgent.request('/basestone.do', {
       data: {
         pageNo,
         pageSize,
         method: 'getAllConfigByTenant',
-        tenant: this.options.namespace,
+        tenant: this.namespace,
       },
     });
     return JSON.parse(ret);
@@ -459,14 +340,14 @@ export class DiamondEnv extends Base implements IDiamondEnv {
    * @return {Boolean} success
    */
   async publishSingle(dataId, group, content) {
-    await this.request('/basestone.do?method=syncUpdateAll', {
+    await this.httpAgent.request('/basestone.do?method=syncUpdateAll', {
       method: 'POST',
       encode: true,
       data: {
         dataId,
         group,
         content,
-        tenant: this.options.namespace,
+        tenant: this.namespace,
       },
     });
     return true;
@@ -479,12 +360,12 @@ export class DiamondEnv extends Base implements IDiamondEnv {
    * @return {Boolean} success
    */
   async remove(dataId, group) {
-    await this.request('/datum.do?method=deleteAllDatums', {
+    await this.httpAgent.request('/datum.do?method=deleteAllDatums', {
       method: 'POST',
       data: {
         dataId,
         group,
-        tenant: this.options.namespace,
+        tenant: this.namespace,
       },
     });
     return true;
@@ -492,7 +373,7 @@ export class DiamondEnv extends Base implements IDiamondEnv {
 
   async publishAggr(dataId, group, datumId, content) {
     const appName = this.appName;
-    await this.request('/datum.do?method=addDatum', {
+    await this.httpAgent.request('/datum.do?method=addDatum', {
       method: 'POST',
       data: {
         dataId,
@@ -500,20 +381,20 @@ export class DiamondEnv extends Base implements IDiamondEnv {
         datumId,
         content,
         appName,
-        tenant: this.options.namespace,
+        tenant: this.namespace,
       },
     });
     return true;
   }
 
   async removeAggr(dataId, group, datumId) {
-    await this.request('/datum.do?method=deleteDatum', {
+    await this.httpAgent.request('/datum.do?method=deleteDatum', {
       method: 'POST',
       data: {
         dataId,
         group,
         datumId,
-        tenant: this.options.namespace,
+        tenant: this.namespace,
       },
     });
     return true;
@@ -527,12 +408,12 @@ export class DiamondEnv extends Base implements IDiamondEnv {
    */
   async batchGetConfig(dataIds, group) {
     const dataIdStr = dataIds.join(WORD_SEPARATOR);
-    const content = await this.request('/config.co?method=batchGetConfig', {
+    const content = await this.httpAgent.request('/config.co?method=batchGetConfig', {
       method: 'POST',
       data: {
         dataIds: dataIdStr,
         group,
-        tenant: this.options.namespace,
+        tenant: this.namespace,
       },
     });
 
@@ -565,12 +446,12 @@ export class DiamondEnv extends Base implements IDiamondEnv {
    */
   async batchQuery(dataIds, group) {
     const dataIdStr = dataIds.join(WORD_SEPARATOR);
-    const content = await this.request('/admin.do?method=batchQuery', {
+    const content = await this.httpAgent.request('/admin.do?method=batchQuery', {
       method: 'POST',
       data: {
         dataIds: dataIdStr,
         group,
-        tenant: this.options.namespace,
+        tenant: this.namespace,
       },
     });
 

@@ -1,10 +1,10 @@
 {
-  "name": "acm-client",
-  "version": "3.0.0",
-  "description": "aliyun acm client",
+  "name": "nacos-client",
+  "version": "1.0.0",
+  "description": "nacos client",
   "keywords": [
-    "acm-client",
-    "acm"
+    "nacos-client",
+    "nacos"
   ],
   "main": "dist/index.js",
   "author": "czy88840616@gmail.com",

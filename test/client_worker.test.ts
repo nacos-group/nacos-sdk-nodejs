@@ -1,35 +1,41 @@
-import { Snapshot } from '../src/snapshot';
-import { ServerListManager } from '../src/server_list_mgr';
-import { DiamondEnv } from '../src/diamond_env';
+import { ClientWorker, ServerListManager, Snapshot } from '../src';
+import * as fs from 'fs';
+import * as path from 'path';
+import { HttpAgent } from '../src/http_agent';
+import { createDefaultConfiguration } from './utils';
 
-const fs = require('fs');
-const path = require('path');
 const mm = require('mm');
 const assert = require('assert');
 const pedding = require('pedding');
 const httpclient = require('urllib');
-const {rimraf, sleep} = require('mz-modules');
-const defaultOptions = {
-  endpoint: 'acm.aliyun.com',
-  namespace: '81597370-5076-4216-9df5-538a2b55bac3',
-  accessKey: '4c796a4dcd0d4f5895d4ba83a296b489',
-  secretKey: 'UjLemP8inirhjMg1NZyY0faOk1E=',
-  httpclient,
-  ssl: false
-};
+const { rimraf, sleep } = require('mz-modules');
 
 const cacheDir = path.join(__dirname, '.cache');
-const snapshot = new Snapshot({cacheDir});
-const serverMgr = new ServerListManager(Object.assign({httpclient, snapshot}, defaultOptions));
 
-describe('test/diamond.test.ts', () => {
-  let client: DiamondEnv;
+const defaultOptions = {
+  serverAddr: '106.14.43.196:8848',
+  namespace: '2609ddea-d79e-487d-8166-4f1c74598866',
+  cacheDir
+};
+
+const configuration = createDefaultConfiguration(defaultOptions);
+
+const snapshot = new Snapshot({ configuration });
+const serverMgr = new ServerListManager({ configuration });
+const httpAgent = new HttpAgent({ configuration });
+configuration.merge({
+  snapshot,
+  serverMgr,
+  httpAgent,
+});
+
+describe('test/client_worker.test.ts', () => {
+  let client: ClientWorker;
 
   function getClient() {
-    return new DiamondEnv(Object.assign({
-      snapshot,
-      serverMgr,
-    }, defaultOptions));
+    return new ClientWorker({
+      configuration
+    });
   }
 
   before(async () => {
@@ -86,10 +92,10 @@ describe('test/diamond.test.ts', () => {
     let count = 0;
     const client = getClient();
     await client.ready();
-    client.subscribe({dataId: 'com.ali.unit.routerule', group: 'DEFAULT_GROUP'}, () => count++);
-    client.subscribe({dataId: 'com.ali.unit.forbiddenuserrule', group: 'DEFAULT_GROUP'}, () => count++);
-    client.subscribe({dataId: 'com.ali.unit.apprule', group: 'DEFAULT_GROUP'}, () => count++);
-    client.subscribe({dataId: 'tangram_page_publish', group: 'tangram'}, () => count++);
+    client.subscribe({ dataId: 'com.ali.unit.routerule', group: 'DEFAULT_GROUP' }, () => count++);
+    client.subscribe({ dataId: 'com.ali.unit.forbiddenuserrule', group: 'DEFAULT_GROUP' }, () => count++);
+    client.subscribe({ dataId: 'com.ali.unit.apprule', group: 'DEFAULT_GROUP' }, () => count++);
+    client.subscribe({ dataId: 'tangram_page_publish', group: 'tangram' }, () => count++);
     await sleep(5000);
     assert(count === 4);
     client.close();
@@ -119,13 +125,19 @@ describe('test/diamond.test.ts', () => {
     });
   });
 
+  it.only('should get config', async () => {
+    const client = getClient();
+    const content = await client.getConfig('test1', 'DEFAULT_GROUP');
+    console.log(content);
+  });
+
   it('should getConfig from diamond server before init', async () => {
     const client = getClient();
-    await client.publishSingle('com.taobao.hsf.redis', 'HSF', '10.123.32.1:8080');
+    await client.publishSingle('com.taobao.hsf.redis', 'testGroup', '10.123.32.1:8080');
     await sleep(1000);
-    const content = await client.getConfig('com.taobao.hsf.redis', 'HSF');
+    const content = await client.getConfig('com.taobao.hsf.redis', 'testGroup');
     assert(/^\d+\.\d+\.\d+\.\d+\:\d+$/.test(content));
-    await client.remove('com.taobao.hsf.redis', 'HSF');
+    await client.remove('com.taobao.hsf.redis', 'testGroup');
     client.close();
   });
 
@@ -182,12 +194,12 @@ describe('test/diamond.test.ts', () => {
     isSuccess = await client.publishSingle('test-dataId4', 'test-group', 'test-content');
     assert(isSuccess === true);
 
-    const content = await client.batchGetConfig(['test-dataId3', 'test-dataId4'], 'test-group');
+    const content = await client.batchGetConfig([ 'test-dataId3', 'test-dataId4' ], 'test-group');
     assert(content && content.length === 2);
-    assert(content[0].dataId === 'test-dataId3');
-    assert(content[0].content === 'test-content');
-    assert(content[1].dataId === 'test-dataId4');
-    assert(content[1].content === 'test-content');
+    assert(content[ 0 ].dataId === 'test-dataId3');
+    assert(content[ 0 ].content === 'test-content');
+    assert(content[ 1 ].dataId === 'test-dataId4');
+    assert(content[ 1 ].content === 'test-content');
 
     const cacheDir = client.snapshot.cacheDir;
     content.forEach(config => {
@@ -197,12 +209,12 @@ describe('test/diamond.test.ts', () => {
   });
 
   it('should batchQuery ok', async () => {
-    const content = await client.batchQuery(['test-dataId3', 'test-dataId4'], 'test-group');
+    const content = await client.batchQuery([ 'test-dataId3', 'test-dataId4' ], 'test-group');
     assert(content && content.length === 2);
-    assert(content[0].dataId === 'test-dataId3');
-    assert(content[0].content === 'test-content');
-    assert(content[1].dataId === 'test-dataId4');
-    assert(content[1].content === 'test-content');
+    assert(content[ 0 ].dataId === 'test-dataId3');
+    assert(content[ 0 ].content === 'test-content');
+    assert(content[ 1 ].dataId === 'test-dataId4');
+    assert(content[ 1 ].content === 'test-content');
   });
 
   describe('mock error', () => {
@@ -255,7 +267,7 @@ describe('test/diamond.test.ts', () => {
       mm.http.requestError(/^\//, null, 'mock res error');
       let error;
       try {
-        await client.batchGetConfig(['test-dataId3', 'test-dataId4'], 'test-group');
+        await client.batchGetConfig([ 'test-dataId3', 'test-dataId4' ], 'test-group');
         throw new Error('should never exec');
       } catch (err) {
         error = err;
@@ -267,7 +279,12 @@ describe('test/diamond.test.ts', () => {
     it('should init failed', async () => {
       mm.empty(serverMgr, 'getOne');
       mm.empty(snapshot, 'get');
-      const client = new DiamondEnv(Object.assign({appName: 'test', httpclient, snapshot, serverMgr}, defaultOptions));
+      const client = new ClientWorker(Object.assign({
+        appName: 'test',
+        httpclient,
+        snapshot,
+        serverMgr
+      }, defaultOptions));
       let error;
       try {
         await client.getConfig('com.taobao.hsf.redis', 'HSF');
@@ -282,7 +299,7 @@ describe('test/diamond.test.ts', () => {
       mm.data(client, 'request', '{');
       let error;
       try {
-        await client.batchGetConfig(['com.taobao.hsf.redis'], 'HSF');
+        await client.batchGetConfig([ 'com.taobao.hsf.redis' ], 'HSF');
       } catch (err) {
         error = err;
       }
@@ -294,7 +311,7 @@ describe('test/diamond.test.ts', () => {
       mm.data(client, 'request', '{');
       let error;
       try {
-        await client.batchQuery(['com.taobao.hsf.redis'], 'HSF');
+        await client.batchQuery([ 'com.taobao.hsf.redis' ], 'HSF');
       } catch (err) {
         error = err;
       }
@@ -376,7 +393,7 @@ describe('test/diamond.test.ts', () => {
     });
 
     it('should throw error if http status is 409', async () => {
-      mm.data(client.httpclient, 'request', {status: 409});
+      mm.data(client.httpclient, 'request', { status: 409 });
       mm.empty(client.snapshot, 'get');
       let error;
       try {

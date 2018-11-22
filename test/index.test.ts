@@ -3,12 +3,13 @@ const assert = require('assert');
 const httpclient = require('urllib');
 const {sleep} = require('mz-modules');
 const co = require('co');
-import { ACMClient } from '../src';
+
+import {Client} from '../src';
 
 describe('test/index.test.ts', () => {
-  let client: ACMClient;
+  let client;
   before(async () => {
-    client = new ACMClient({
+    client = new Client({
       endpoint: 'acm.aliyun.com',
       namespace: '81597370-5076-4216-9df5-538a2b55bac3',
       accessKey: '4c796a4dcd0d4f5895d4ba83a296b489',

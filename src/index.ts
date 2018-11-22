@@ -1,10 +1,14 @@
 import { DataClient } from './client';
+export { DataClient } from './client';
+export { ClientWorker } from './client_worker';
 import { checkParameters } from './utils';
 import { BaseClient } from './interface';
+export { ServerListManager } from './server_list_mgr';
+export { Snapshot } from './snapshot';
 
 const APIClientBase = require('cluster-client').APIClientBase;
 
-export class ACMClient extends APIClientBase implements BaseClient {
+class NacosClient extends APIClientBase implements BaseClient {
 
   /**
    * cluster-client wrapper client
@@ -188,3 +192,5 @@ export class ACMClient extends APIClientBase implements BaseClient {
     return DataClient;
   }
 }
+
+export const Client = NacosClient;

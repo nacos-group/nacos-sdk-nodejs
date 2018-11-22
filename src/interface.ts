@@ -28,7 +28,7 @@ export interface UnitOptions {
 /**
  * @description Diamond client interface
  */
-export interface BaseClient extends IDiamondEnv {
+export interface BaseClient extends IClientWorker {
   /**
    * @description 获取当前机器所在机房
    * @returns {Promise<string>} currentUnit
@@ -62,7 +62,7 @@ export interface BaseClient extends IDiamondEnv {
 /**
  * 每个 diamond 环境实例
  */
-export interface IDiamondEnv {
+export interface IClientWorker {
   /**
    * @description 获取配置
    * @param {String} dataId - id of the data
@@ -169,6 +169,7 @@ export interface IDiamondEnv {
    * @description close connection
    */
   close(): void;
+
   on?(evt: string, fn: (err: Error) => void): void;
 }
 
@@ -187,6 +188,17 @@ export interface IServerListManager {
   fetchUnitLists(): Promise<Array<string>>;
 
   /**
+   * 更新当前服务器
+   */
+  updateCurrentServer(unit?: string): Promise<void>;
+
+  /**
+   * 获取一个服务器地址
+   * @param unit
+   */
+  getCurrentServerAddr(unit?: string): Promise<string>;
+
+  /**
    * @description close connection
    */
   close();
@@ -196,20 +208,6 @@ export interface IServerListManager {
 
 export interface ISnapshot {
   // on(evt: string, fn: (err: Error) => void): void;
-}
-
-export interface DiamondEnvOptions {
-  httpclient?: any;
-  snapshot?: ISnapshot;
-  serverMgr?: IServerListManager;
-  unit?: string;
-}
-
-export interface serverListMgrOptions {
-  httpclient?: any;
-  snapshot?: ISnapshot;
-  endpoint?: string;
-  cacheDir?: string;
 }
 
 export interface DiamondError extends Error {
@@ -226,12 +224,48 @@ export interface SnapShotData {
   value?: string;
 }
 
-export interface DataClientOptions {
-  endpoint: string;
-  namespace: string;
-  accessKey: string;
-  secretKey: string;
+export interface ClientOptions {
+  endpoint?: string;
+  serverPort?: number;
+  namespace?: string;
+  accessKey?: string;
+  secretKey?: string;
   httpclient?: any;
   appName?: string;
   ssl?: boolean;
+  refreshInterval?: number;
+  contextPath?: string;
+  clusterName?: string;
+  requestTimeout?: number;
+}
+
+export enum ClientOptionKeys {
+  ENDPOINT = 'endpoint',
+  SERVER_PORT = 'serverPort',
+  NAMESPACE = 'namespace',
+  ACCESSKEY = 'accessKey',
+  SECRETKEY = 'secretKey',
+  HTTPCLIENT = 'httpclient',
+  APPNAME = 'appName',
+  SSL = 'ssl',
+  SNAPSHOT = 'snapshot',
+  CACHE_DIR = 'cacheDir',
+  NAMESERVERADDR = 'nameServerAddr',   // 保留原有的配置功能
+  SERVERADDR = 'serverAddr',  // 用于直连，包含端口
+  UNIT = 'unit',
+  REFRESH_INTERVAL = 'refreshInterval', // 重新拉去地址列表的间隔时间
+  CONTEXTPATH = 'contextPath',
+  CLUSTER_NAME = 'clusterName',
+  REQUEST_TIMEOUT = 'requestTimeout',
+  HTTP_AGENT = 'httpAgent',
+  SERVER_MGR = 'serverMgr',
+}
+
+export interface IConfiguration {
+  merge(config: any): IConfiguration;
+  attach(config: any): IConfiguration;
+  get(configKey?: ClientOptionKeys): any;
+  has(configKey: ClientOptionKeys): boolean;
+  set(configKey: ClientOptionKeys, target: any): IConfiguration;
+  modify(configKey: ClientOptionKeys, changeHandler: (target: any) => any): IConfiguration;
 }
