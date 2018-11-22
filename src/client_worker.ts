@@ -1,4 +1,20 @@
-import { ClientOptionKeys, DiamondError, IClientWorker, IConfiguration, SnapShotData } from './interface';
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+import { API_ROUTE, ClientOptionKeys, DiamondError, IClientWorker, IConfiguration, SnapShotData } from './interface';
 import { LINE_SEPARATOR, WORD_SEPARATOR } from './const';
 import { getMD5String } from './utils';
 
@@ -17,18 +33,16 @@ export class ClientWorker extends Base implements IClientWorker {
   private subscriptions = new Map();
   protected loggerDomain = 'Nacos';
   private debug = require('debug')(`${this.loggerDomain}:${process.pid}:ins-${this.uuid}:client_worker`);
+  protected apiRoutePath: API_ROUTE = {
+    GET: `/v1/cs/configs`,
+    BATCH_GET: `/v1/cs/configs`,
+    BATCH_QUERY: `/v1/cs/configs`,
+    PUBLISH: `/v1/cs/configs`,
+    PUBLISH_ALL: `/v1/cs/configs`,
+    REMOVE: `/v1/cs/configs`,
+    REMOVE_ALL: `/v1/cs/configs`,
+  };
 
-  /**
-   * Diamond Client.
-   *
-   * @param {Object} options
-   *  - {Number} [refreshInterval] data refresh interval time, default is 30000 ms
-   *  - {Number} [requestTimeout] diamond request timeout, default is 5000 ms
-   *  - {String} [unit] unit name
-   *  - {HttpClient} httpclient http request client
-   *  - {Snapshot} snapshot snapshot instance
-   * @constructor
-   */
   constructor(options) {
     super(options);
     // 同一个key可能会被多次订阅，避免不必要的 `warning`
@@ -284,7 +298,7 @@ export class ClientWorker extends Base implements IClientWorker {
     // TODO 优先使用本地配置
 
     try {
-      content = await this.httpAgent.request('/v1/cs/configs', {
+      content = await this.httpAgent.request(this.apiRoutePath.GET, {
         data: {
           dataId,
           group,
@@ -340,7 +354,7 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {Boolean} success
    */
   async publishSingle(dataId, group, content) {
-    await this.httpAgent.request('/basestone.do?method=syncUpdateAll', {
+    await this.httpAgent.request(this.apiRoutePath.PUBLISH, {
       method: 'POST',
       encode: true,
       data: {
@@ -360,13 +374,14 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {Boolean} success
    */
   async remove(dataId, group) {
-    await this.httpAgent.request('/datum.do?method=deleteAllDatums', {
-      method: 'POST',
+    await this.httpAgent.request(this.apiRoutePath.REMOVE, {
+      method: 'DELETE',
       data: {
         dataId,
         group,
         tenant: this.namespace,
       },
+      dataAsQueryString: true,
     });
     return true;
   }
@@ -463,4 +478,5 @@ export class ClientWorker extends Base implements IClientWorker {
       throw err;
     }
   }
+
 }

@@ -1,3 +1,19 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 import { HTTP_CONFLICT, HTTP_NOT_FOUND, HTTP_OK, VERSION } from './const';
 import { ClientOptionKeys, IConfiguration, IServerListManager } from './interface';
 import * as urllib from 'urllib';
@@ -77,11 +93,12 @@ export class HttpAgent {
     timeout?: number;
     headers?: any;
     unit?: string;
+    dataAsQueryString?: boolean;
   } = {}) {
     // 默认为当前单元
     const unit = options.unit || this.unit;
     const ts = String(Date.now());
-    const { encode = false, method = 'GET', data, timeout = this.requestTimeout, headers = {} } = options;
+    const { encode = false, method = 'GET', data, timeout = this.requestTimeout, headers = {}, dataAsQueryString = false } = options;
 
     const endTime = Date.now() + timeout;
     let lastErr;
@@ -127,6 +144,7 @@ export class HttpAgent {
           headers,
           timeout,
           secureProtocol: 'TLSv1_2_method',
+          dataAsQueryString,
         });
         this.debug('%s %s, got %s, body: %j', method, url, res.status, res.data);
         switch (res.status) {
@@ -137,14 +155,14 @@ export class HttpAgent {
           case HTTP_CONFLICT:
             await this.serverListMgr.updateCurrentServer(unit);
             // JAVA 在外面业务类处理的这个逻辑，应该是需要重试的
-            lastErr = new Error(`[DiamondEnv] Diamond server config being modified concurrently, data: ${JSON.stringify(data)}`);
-            lastErr.name = 'DiamondServerConflictError';
+            lastErr = new Error(`[Client Worker] ${this.loggerDomain} server config being modified concurrently, data: ${JSON.stringify(data)}`);
+            lastErr.name = `${this.loggerDomain}ServerConflictError`;
             break;
           default:
             await this.serverListMgr.updateCurrentServer(unit);
             // JAVA 还有一个针对 HTTP_FORBIDDEN 的处理，不过合并到 default 应该也没问题
-            lastErr = new Error(`Diamond Server Error Status: ${res.status}, url: ${url}, data: ${JSON.stringify(data)}`);
-            lastErr.name = 'DiamondServerResponseError';
+            lastErr = new Error(`${this.loggerDomain} Server Error Status: ${res.status}, url: ${url}, data: ${JSON.stringify(data)}`);
+            lastErr.name = `${this.loggerDomain}ServerResponseError`;
             lastErr.body = res.data;
             break;
         }

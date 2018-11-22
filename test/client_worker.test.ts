@@ -6,6 +6,22 @@ import { createDefaultConfiguration } from './utils';
 
 const mm = require('mm');
 const assert = require('assert');
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 const pedding = require('pedding');
 const httpclient = require('urllib');
 const { rimraf, sleep } = require('mz-modules');
@@ -14,7 +30,7 @@ const cacheDir = path.join(__dirname, '.cache');
 
 const defaultOptions = {
   serverAddr: '106.14.43.196:8848',
-  namespace: '2609ddea-d79e-487d-8166-4f1c74598866',
+  namespace: '',
   cacheDir
 };
 
@@ -50,21 +66,21 @@ describe('test/client_worker.test.ts', () => {
   });
 
 
-  describe('require value before test', () => {
+  describe.only('require value before test', () => {
 
     before(async () => {
-      await client.publishSingle('com.taobao.hsf.redis', 'HSF', '10.123.32.1:8080');
+      await client.publishSingle('com.taobao.hsf.redis', 'DEFAULT_GROUP', '10.123.32.1:8080');
       await sleep(1000);
     });
 
     after(async () => {
-      await client.remove('com.taobao.hsf.redis', 'HSF');
+      await client.remove('com.taobao.hsf.redis', 'DEFAULT_GROUP');
     });
 
     it('should subscribe mutli times ok', async () => {
       const reg = {
         dataId: 'com.taobao.hsf.redis',
-        group: 'HSF',
+        group: 'DEFAULT_GROUP',
       };
 
       client.subscribe(reg, val => {
@@ -82,7 +98,7 @@ describe('test/client_worker.test.ts', () => {
     });
 
     it('should getConfig from diamond server', async () => {
-      const content = await client.getConfig('com.taobao.hsf.redis', 'HSF');
+      const content = await client.getConfig('com.taobao.hsf.redis', 'DEFAULT_GROUP');
       assert(/^\d+\.\d+\.\d+\.\d+\:\d+$/.test(content));
     });
 
@@ -125,10 +141,10 @@ describe('test/client_worker.test.ts', () => {
     });
   });
 
-  it.only('should get config', async () => {
+  it('should get config', async () => {
     const client = getClient();
     const content = await client.getConfig('test1', 'DEFAULT_GROUP');
-    console.log(content);
+    assert(content === 'ab =x');
   });
 
   it('should getConfig from diamond server before init', async () => {
