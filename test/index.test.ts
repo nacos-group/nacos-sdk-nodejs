@@ -84,7 +84,7 @@ describe('test/index.test.ts', () => {
     assert(temp == null);
   });
 
-  it('should batchQuery ok', async () => {
+  xit('should batchQuery ok', async () => {
     const dataIds = ['acm.test', 'json.data'];
     const group = 'DEFAULT_GROUP';
     const content = await client.batchQuery(dataIds, group);
@@ -92,7 +92,7 @@ describe('test/index.test.ts', () => {
     assert(content[1].dataId === dataIds[1]);
   });
 
-  it.skip('should getAllConfigInfo ok', async () => {
+  xit('should getAllConfigInfo ok', async () => {
     const configs = await client.getAllConfigInfo();
     assert(configs.length);
   });

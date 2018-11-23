@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 import { ServerListManager } from '../src';
+import { createDefaultConfiguration } from './utils';
 
 const fs = require('mz/fs');
 const path = require('path');
@@ -28,14 +29,15 @@ describe('test/server_list_mgr.test.ts', () => {
   const cacheDir = path.join(__dirname, '.cache');
 
   describe('find server addresss list by server', () => {
-    let serverManager;
+    let serverManager: ServerListManager;
 
     before(async () => {
-      serverManager = new ServerListManager({
+      const configuration = createDefaultConfiguration({
         httpclient,
         endpoint: 'acm.aliyun.com',
         cacheDir,
       });
+      serverManager = new ServerListManager({ configuration });
       await serverManager.ready();
     });
 
@@ -55,32 +57,27 @@ describe('test/server_list_mgr.test.ts', () => {
       serverManager.ready(() => serverManager.ready(done));
     });
 
-    it('should throw error if httpclient not providered', () => {
-      assert.throws(() => {
-        new ServerListManager({ httpclient: null });
-      }, { message: '[Nacos#ServerListManager] options.httpclient is required' });
-    });
-
-    describe('getOne()', () => {
+    describe('getCurrentServerAddr()', () => {
       it('should got nacos server list data', async () => {
-        let host = await serverManager.getOne();
+        let host = await serverManager.getCurrentServerAddr();
         assert(host && /^\d+\.\d+\.\d+\.\d+$/.test(host));
-        host = await serverManager.getOne();
+        host = await serverManager.getCurrentServerAddr();
         assert(host && /^\d+\.\d+\.\d+\.\d+$/.test(host));
       });
 
       it('should traverse all diamond server list data', async () => {
-        const start = await serverManager.getOne();
+        const start = await serverManager.getCurrentServerAddr();
         let host;
         do {
-          host = await serverManager.getOne();
+          host = await serverManager.getCurrentServerAddr();
         } while (start !== host);
       });
 
       it('should return null when server list return empty', async () => {
         mm.data(serverManager, 'fetchServerList', null);
         mm(serverManager, 'serverListCache', new Map());
-        const result = await serverManager.getOne();
+        mm(serverManager, 'currentServerAddrMap', new Map());
+        const result = await serverManager.getCurrentServerAddr();
         assert(result == null);
       });
     });
@@ -125,18 +122,18 @@ describe('test/server_list_mgr.test.ts', () => {
 
     describe('snapshot', () => {
       it('should save diamond server list ok', async () => {
-        const host = await serverManager.getOne();
+        const host = await serverManager.getCurrentServerAddr();
         assert(host && /^\d+\.\d+\.\d+\.\d+$/.test(host));
         const isExist = await fs.exists(path.join(cacheDir, 'snapshot', 'server_list', 'CURRENT_UNIT'));
         assert(isExist);
       });
 
       it('should get diamond server list ok when request error', async () => {
-        let host = await serverManager.getOne();
+        let host = await serverManager.getCurrentServerAddr();
         assert(host && /^\d+\.\d+\.\d+\.\d+$/.test(host));
         mm(serverManager, 'serverListCache', new Map());
         mm.data(serverManager, 'request', null);
-        host = await serverManager.getOne();
+        host = await serverManager.getCurrentServerAddr();
         assert(host && /^\d+\.\d+\.\d+\.\d+$/.test(host));
       });
     });
@@ -144,7 +141,7 @@ describe('test/server_list_mgr.test.ts', () => {
     describe('_syncServers', () => {
       it('should auto _syncServers', async () => {
         // assert(serverManager.isSync);
-        const host = await serverManager.getOne();
+        const host = await serverManager.getCurrentServerAddr();
         assert(host && /^\d+\.\d+\.\d+\.\d+$/.test(host));
         assert(serverManager.hasServerInCache('CURRENT_UNIT'));
         serverManager.syncServers();
@@ -167,8 +164,9 @@ describe('test/server_list_mgr.test.ts', () => {
         serverManager.clearaServerCache();
         mm.data(serverManager, 'request', null);
         mm.data(serverManager.snapshot, 'get', null);
+        mm(serverManager, 'currentServerAddrMap', new Map());
 
-        const host = await serverManager.getOne('CURRENT_UNIT');
+        const host = await serverManager.getCurrentServerAddr('CURRENT_UNIT');
         assert(!host);
         mm.restore();
         await sleep(4000);
@@ -182,11 +180,12 @@ describe('test/server_list_mgr.test.ts', () => {
     let serverManager: ServerListManager;
 
     before(async () => {
-      serverManager = new ServerListManager({
+      const configuration = createDefaultConfiguration({
         httpclient,
         serverAddr: '106.14.43.196:8848',
         cacheDir,
       });
+      serverManager = new ServerListManager({ configuration });
       await serverManager.ready();
     });
 
@@ -199,13 +198,13 @@ describe('test/server_list_mgr.test.ts', () => {
     });
 
     it('should get server from direct mode', async () => {
-      const addr = await serverManager.getServerAddr();
+      const addr = await serverManager.getServerInCache();
       assert(addr.hosts.length === 1);
       assert(addr.index === 0);
     });
 
     it('should get one addr from direct mode', async () => {
-      const addr = await serverManager.getOne();
+      const addr = await serverManager.getCurrentServerAddr();
       assert(addr && /^\d+\.\d+\.\d+\.\d+:\d+$/.test(addr));
     });
   });

@@ -14,7 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { BaseClient, ClientOptions, IClientWorker, IServerListManager, ISnapshot, } from './interface';
+import {
+  BaseClient,
+  ClientOptionKeys,
+  ClientOptions,
+  IClientWorker,
+  IConfiguration,
+  IServerListManager,
+  ISnapshot,
+} from './interface';
 import { ServerListManager } from './server_list_mgr';
 import { ClientWorker } from './client_worker';
 import { Snapshot } from './snapshot';
@@ -30,7 +38,7 @@ const Base = require('sdk-base');
 export class DataClient extends Base implements BaseClient {
 
   private clients: Map<string, IClientWorker>;
-  private configuration;
+  private configuration: IConfiguration;
   protected snapshot: ISnapshot;
   protected serverMgr: IServerListManager;
   protected httpAgent;
@@ -44,7 +52,7 @@ export class DataClient extends Base implements BaseClient {
 
     this.snapshot = this.getSnapshot();
     this.serverMgr = this.getServerListManager();
-    this.httpAgent = new HttpAgent(this.configuration);
+    this.httpAgent = new HttpAgent({ configuration: this.configuration });
 
     this.configuration.merge({
       snapshot: this.snapshot,
@@ -59,11 +67,11 @@ export class DataClient extends Base implements BaseClient {
   }
 
   get appName() {
-    return this.options.appName;
+    return this.configuration.get(ClientOptionKeys.APPNAME);
   }
 
-  get appKey() {
-    return this.options.appKey;
+  get httpclient() {
+    return this.configuration.get(ClientOptionKeys.HTTPCLIENT);
   }
 
   /**

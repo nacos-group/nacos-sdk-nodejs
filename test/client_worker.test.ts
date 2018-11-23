@@ -34,7 +34,7 @@ function getClient(configuration) {
   });
 }
 
-describe.only('test/client_worker.test.ts', () => {
+describe('test/client_worker.test.ts', () => {
 
   describe('test features in direct mode', () => {
 
@@ -173,7 +173,7 @@ describe.only('test/client_worker.test.ts', () => {
 
   });
 
-  describe.only('test features in find address mode', () => {
+  describe('test features in find address mode', () => {
 
     const defaultOptions = {
       appName: 'test',
@@ -210,7 +210,7 @@ describe.only('test/client_worker.test.ts', () => {
       await rimraf(cacheDir);
     });
 
-    it.only('should getConfig from nacos server', async () => {
+    it('should getConfig from nacos server', async () => {
       const content = await client.getConfig('com.taobao.hsf.redis', 'DEFAULT_GROUP');
       assert(/^\d+\.\d+\.\d+\.\d+\:\d+$/.test(content));
     });
@@ -269,7 +269,7 @@ describe.only('test/client_worker.test.ts', () => {
       assert(content == null);
     });
 
-    it('should publishAggr & removeAggr ok', async () => {
+    xit('should publishAggr & removeAggr ok', async () => {
       let isSuccess = await client.publishAggr('NS_DIAMOND_SUBSCRIPTION_TOPIC_chenwztest', 'DEFAULT_GROUP', 'somebody-pub-test', 'xx xx');
       assert(isSuccess === true);
       await sleep(1000);
@@ -285,7 +285,7 @@ describe.only('test/client_worker.test.ts', () => {
       assert(content === '宗羽');
     });
 
-    it('should batchGetConfig and save snapshot ok', async () => {
+    xit('should batchGetConfig and save snapshot ok', async () => {
       let isSuccess = await client.publishSingle('test-dataId3', 'test-group', 'test-content');
       assert(isSuccess === true);
 
@@ -306,7 +306,7 @@ describe.only('test/client_worker.test.ts', () => {
       });
     });
 
-    it('should batchQuery ok', async () => {
+    xit('should batchQuery ok', async () => {
       const content = await client.batchQuery([ 'test-dataId3', 'test-dataId4' ], 'test-group');
       assert(content && content.length === 2);
       assert(content[ 0 ].dataId === 'test-dataId3');

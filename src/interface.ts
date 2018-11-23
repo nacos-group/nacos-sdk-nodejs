@@ -226,7 +226,7 @@ export interface ISnapshot {
   // on(evt: string, fn: (err: Error) => void): void;
 }
 
-export interface DiamondError extends Error {
+export interface NacosHttpError extends Error {
   url?: string;
   params?: any;
   body?: any;

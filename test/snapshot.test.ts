@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 import { Snapshot } from '../src/snapshot';
+import { createDefaultConfiguration } from './utils';
 
 const fs = require('mz/fs');
 const path = require('path');
@@ -27,7 +28,10 @@ const cacheDir = path.join(__dirname, '.cache');
 describe('test/snapshot.test.ts', () => {
   let snapshot;
   before(async () => {
-    snapshot = new Snapshot({ cacheDir });
+    const configuration = createDefaultConfiguration({
+      cacheDir,
+    });
+    snapshot = new Snapshot({ configuration });
     await snapshot.ready();
   });
   afterEach(mm.restore);

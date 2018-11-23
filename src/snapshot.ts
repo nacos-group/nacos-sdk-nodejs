@@ -16,13 +16,13 @@
  */
 import { ClientOptionKeys, IConfiguration, SnapShotData } from './interface';
 import * as path from 'path';
-import * as fs from 'fs';
 import * as assert from 'assert';
 
 const Base = require('sdk-base');
 const is = require('is-type-of');
 const { mkdirp, rimraf } = require('mz-modules');
 const debug = require('debug')('diamond-client:snapshot');
+const fs = require('mz/fs');
 
 export class Snapshot extends Base {
 
@@ -45,9 +45,9 @@ export class Snapshot extends Base {
   async get(key) {
     const filepath = this.getSnapshotFile(key);
     try {
-      const exists = fs.existsSync(filepath);
+      const exists = await fs.exists(filepath);
       if (exists) {
-        return fs.readFileSync(filepath, 'utf8');
+        return await fs.readFile(filepath, 'utf8');
       }
     } catch (err) {
       err.name = 'SnapshotReadError';
@@ -62,7 +62,7 @@ export class Snapshot extends Base {
     value = value || '';
     try {
       await mkdirp(dir);
-      fs.writeFileSync(filepath, value);
+      await fs.writeFile(filepath, value);
     } catch (err) {
       err.name = 'SnapshotWriteError';
       err.key = key;

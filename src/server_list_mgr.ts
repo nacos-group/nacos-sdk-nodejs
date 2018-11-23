@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 import { Snapshot } from './snapshot';
-import { ClientOptionKeys, DiamondError, IConfiguration, IServerListManager } from './interface';
+import { ClientOptionKeys, NacosHttpError, IConfiguration, IServerListManager } from './interface';
 import { CURRENT_UNIT } from './const';
 import * as path from 'path';
 
@@ -107,6 +107,10 @@ export class ServerListManager extends Base implements IServerListManager {
     return this.configuration.get(ClientOptionKeys.CLUSTER_NAME) || 'serverlist';
   }
 
+  get requestTimeout() {
+    return this.configuration.get(ClientOptionKeys.REQUEST_TIMEOUT);
+  }
+
   /**
    * 关闭地址列表服务
    */
@@ -118,7 +122,7 @@ export class ServerListManager extends Base implements IServerListManager {
     const res = await this.httpclient.request(url, options);
     const { status, data } = res;
     if (status !== 200) {
-      const err: DiamondError = new Error(`[${this.loggerDomain}#ServerListManager] request url: ${url} failed with statusCode: ${status}`);
+      const err: NacosHttpError = new Error(`[${this.loggerDomain}#ServerListManager] request url: ${url} failed with statusCode: ${status}`);
       err.name = `${this.loggerDomain}ServerResponseError`;
       err.url = url;
       err.params = options;
@@ -167,13 +171,13 @@ export class ServerListManager extends Base implements IServerListManager {
   }
 
   // 获取某个单元的 server 列表
-  private async fetchServerList(unit = CURRENT_UNIT) {
+  async fetchServerList(unit = CURRENT_UNIT) {
     const key = this.formatKey(unit);
     const url = this.getRequestUrl(unit);
     let hosts;
     try {
       let data = await this.request(url, {
-        timeout: this.configuration.get(ClientOptionKeys.REQUEST_TIMEOUT),
+        timeout: this.requestTimeout,
         dataType: 'text',
       });
       data = data || '';
@@ -181,7 +185,7 @@ export class ServerListManager extends Base implements IServerListManager {
       const length = hosts.length;
       this.debug('got %d hosts, the serverlist is: %j', length, hosts);
       if (!length) {
-        const err: DiamondError = new Error(`[${this.loggerDomain}#ServerListManager] ${this.loggerDomain} return empty hosts`);
+        const err: NacosHttpError = new Error(`[${this.loggerDomain}#ServerListManager] ${this.loggerDomain} return empty hosts`);
         err.name = `${this.loggerDomain}ServerHostEmptyError`;
         err.unit = unit;
         throw err;
@@ -263,6 +267,11 @@ export class ServerListManager extends Base implements IServerListManager {
   // for test
   hasServerInCache(serverName) {
     return this.serverListCache.has(serverName);
+  }
+
+  // for test
+  getServerInCache(unit = CURRENT_UNIT) {
+    return this.serverListCache.get(unit);
   }
 
   // for test

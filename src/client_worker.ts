@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { API_ROUTE, ClientOptionKeys, DiamondError, IClientWorker, IConfiguration, SnapShotData } from './interface';
+import { API_ROUTE, ClientOptionKeys, NacosHttpError, IClientWorker, IConfiguration } from './interface';
 import { LINE_SEPARATOR, WORD_SEPARATOR } from './const';
 import { getMD5String } from './utils';
 
@@ -136,7 +136,7 @@ export class ClientWorker extends Base implements IClientWorker {
         continue;
       }
       if (result.isError) {
-        const err: DiamondError = new Error(`[DiamondEnv] getConfig failed for dataId: ${item.dataId}, group: ${item.group}, error: ${result.error}`);
+        const err: NacosHttpError = new Error(`[DiamondEnv] getConfig failed for dataId: ${item.dataId}, group: ${item.group}, error: ${result.error}`);
         err.name = 'DiamondSyncConfigError';
         err.dataId = item.dataId;
         err.group = item.group;
@@ -207,7 +207,7 @@ export class ClientWorker extends Base implements IClientWorker {
     }
 
     const postData = {};
-    postData[this.listenerDataKey] = probeUpdate.join('');
+    postData[ this.listenerDataKey ] = probeUpdate.join('');
 
     const content = await this.httpAgent.request(this.apiRoutePath.LISTENER, {
       method: 'POST',
@@ -326,29 +326,8 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {Array} config
    */
   async getConfigs() {
-    const configInfoPage = await this.getAllConfigInfoByTenantInner(1, 1);
-    const total = configInfoPage.totalCount;
-    const pageSize = 200;
-    let configs = [];
-    for (let i = 0; i * pageSize < total; i++) {
-      const configInfo = await this.getAllConfigInfoByTenantInner(i + 1, pageSize);
-      configs = configs.concat(configInfo.pageItems);
-    }
-    return configs;
+    return null;
   }
-
-  async getAllConfigInfoByTenantInner(pageNo, pageSize) {
-    const ret = await this.httpAgent.request('/basestone.do', {
-      data: {
-        pageNo,
-        pageSize,
-        method: 'getAllConfigByTenant',
-        tenant: this.namespace,
-      },
-    });
-    return JSON.parse(ret);
-  }
-
 
   /**
    * 发布配置
@@ -391,32 +370,11 @@ export class ClientWorker extends Base implements IClientWorker {
   }
 
   async publishAggr(dataId, group, datumId, content) {
-    const appName = this.appName;
-    await this.httpAgent.request(this.apiRoutePath.PUBLISH_ALL, {
-      method: 'POST',
-      data: {
-        dataId,
-        group,
-        datumId,
-        content,
-        appName,
-        tenant: this.namespace,
-      },
-    });
     return true;
   }
 
   async removeAggr(dataId, group, datumId) {
-    await this.httpAgent.request(this.apiRoutePath.REMOVE_ALL, {
-      method: 'POST',
-      data: {
-        dataId,
-        group,
-        datumId,
-        tenant: this.namespace,
-      },
-    });
-    return true;
+    return null;
   }
 
   /**
@@ -426,35 +384,7 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {Array} result
    */
   async batchGetConfig(dataIds, group) {
-    const dataIdStr = dataIds.join(WORD_SEPARATOR);
-    const content = await this.httpAgent.request(this.apiRoutePath.BATCH_GET, {
-      method: 'POST',
-      data: {
-        dataIds: dataIdStr,
-        group,
-        tenant: this.namespace,
-      },
-    });
-
-    try {
-      /**
-       * data 结构
-       * [{status: 1, group: "test-group", dataId: 'test-dataId3', content: 'test-content'}]
-       */
-      const data = JSON.parse(content);
-      const savedData = data.filter(d => d.status === 1).map(d => {
-        const r: SnapShotData = {};
-        r.key = path.join(this.getSnapshotKey(d.dataId, d.group));
-        r.value = d.content;
-        return r;
-      });
-      await this.snapshot.batchSave(savedData);
-      return data;
-    } catch (err) {
-      err.name = 'DiamondBatchDeserializeError';
-      err.data = content;
-      throw err;
-    }
+    return null;
   }
 
   /**
@@ -464,23 +394,7 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {Object} result
    */
   async batchQuery(dataIds, group) {
-    const dataIdStr = dataIds.join(WORD_SEPARATOR);
-    const content = await this.httpAgent.request(this.apiRoutePath.BATCH_QUERY, {
-      method: 'POST',
-      data: {
-        dataIds: dataIdStr,
-        group,
-        tenant: this.namespace,
-      },
-    });
-
-    try {
-      return JSON.parse(content);
-    } catch (err) {
-      err.name = 'DiamondBatchDeserializeError';
-      err.data = content;
-      throw err;
-    }
+    return null;
   }
 
   // for test
