@@ -9,7 +9,7 @@
   "main": "dist/index.js",
   "author": "czy88840616@gmail.com",
   "dependencies": {
-    "nacos-client": "^1.0.0",
+    "nacos-config": "^1.0.0",
     "nacos-naming": "^1.0.0"
   },
   "devDependencies": {
