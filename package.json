@@ -24,7 +24,6 @@
     "eggjs",
     "midwayjs"
   ],
-  "author": "gxcsoccer <gxcsoccer@126.com>",
   "license": "Apache",
   "bugs": {
     "url": "https://github.com/nacos-group/nacos-sdk-nodejs/issues"
@@ -39,7 +38,6 @@
   },
   "devDependencies": {
     "contributors": "^0.5.1",
-    "egg-ci": "^1.10.0",
     "lerna": "^3.4.3",
     "lerna-relinker": "^1.5.0"
   }

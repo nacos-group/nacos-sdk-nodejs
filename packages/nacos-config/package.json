@@ -30,13 +30,11 @@
     "mm": "^2.4.1",
     "pedding": "^1.1.0",
     "tslint": "^5.11.0",
-    "typescript": "^2.8.0"
+    "typescript": "^2.8.0",
+    "contributors": "^0.5.1"
   },
   "engines": {
     "node": ">= 8.0.0"
-  },
-  "ci": {
-    "versions": "8,9,10"
   },
   "scripts": {
     "autod": "midway-bin autod",
@@ -44,7 +42,7 @@
     "test": "npm run test-local",
     "test-local": "TEST_REPORTER=spec midway-bin test --ts",
     "cov": "TEST_REPORTER=spec midway-bin cov --ts",
-    "contributors": "ali-contributors",
+    "contributors": "contributors",
     "ci": "npm run lint && npm run cov",
     "build": "midway-bin build --ts"
   },
