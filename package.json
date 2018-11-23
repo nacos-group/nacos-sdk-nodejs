@@ -2,20 +2,16 @@
   "name": "nacos",
   "version": "0.0.0",
   "description": "nacos (https://nacos.io/en-us/) nodejs sdk",
-  "main": "index.js",
-  "files": [
-    "lib",
-    "index.js"
-  ],
   "scripts": {
-    "autod": "autod",
-    "lint": "eslint . --ext .js",
-    "cov": "TEST_TIMEOUT=20000 egg-bin cov",
-    "test": "npm run lint && npm run test-local",
-    "test-local": "egg-bin test",
-    "pkgfiles": "egg-bin pkgfiles --check",
-    "ci": "npm run autod -- --check && npm run pkgfiles && npm run lint && npm run cov",
-    "contributors": "contributors -f plain -o AUTHORS"
+    "contributors": "contributors -f plain -o AUTHORS",
+    "clean": "lerna clean --yes; rm -rf ./packages/**/package-lock.json",
+    "bootstrap": "rm -f ./packages/.DS*; lerna bootstrap --no-ci",
+    "publish": "rm -f ./packages/.DS*; sh scripts/publish.sh",
+    "next": "sh scripts/publish.sh --npm-tag next",
+    "test": "lerna run test",
+    "cov": "sh scripts/cov.sh",
+    "ci": "npm run cov",
+    "build": "lerna run build"
   },
   "repository": {
     "type": "git",
@@ -25,7 +21,8 @@
     "nacos",
     "cloud",
     "native",
-    "eggjs"
+    "eggjs",
+    "midwayjs"
   ],
   "author": "gxcsoccer <gxcsoccer@126.com>",
   "license": "Apache",
@@ -40,23 +37,10 @@
     "type": "travis",
     "version": "8, 10"
   },
-  "dependencies": {
-    "address": "^1.0.3",
-    "mz-modules": "^2.1.0",
-    "sdk-base": "^3.5.1",
-    "urllib": "^2.31.2",
-    "utility": "^1.15.0",
-    "uuid": "^3.3.2"
-  },
   "devDependencies": {
-    "autod": "^3.0.1",
-    "await-event": "^2.1.0",
     "contributors": "^0.5.1",
-    "egg-bin": "^4.9.0",
     "egg-ci": "^1.10.0",
-    "eslint": "^5.9.0",
-    "eslint-config-egg": "^7.1.0",
-    "mm": "^2.4.1",
-    "mz-modules": "^2.1.0"
+    "lerna": "^3.4.3",
+    "lerna-relinker": "^1.5.0"
   }
 }
