@@ -17,6 +17,8 @@ before_install:
   - 'curl "127.0.0.1:8848/nacos/v1/ns/api/hello"'
 install:
   - npm i npminstall && npminstall
+  - npm run bootstrap
+  - npm run build
 script:
   - npm run ci
 after_script:
