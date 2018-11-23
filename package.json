@@ -10,7 +10,8 @@
     "next": "sh scripts/publish.sh --npm-tag next",
     "test": "lerna run test",
     "cov": "sh scripts/cov.sh",
-    "ci": "npm run cov"
+    "ci": "npm run cov",
+    "build": "lerna run build"
   },
   "repository": {
     "type": "git",
