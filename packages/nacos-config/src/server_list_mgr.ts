@@ -37,7 +37,8 @@ export class ServerListManager extends Base implements IServerListManager {
   private currentUnit = CURRENT_UNIT;
   private isDirectMode = false;
   protected loggerDomain = 'Nacos';
-  protected debug = require('debug')(`${this.loggerDomain}:${process.pid}:mgr`);
+  private debugPrefix = this.loggerDomain.toLowerCase();
+  protected debug = require('debug')(`${this.debugPrefix}:${process.pid}:mgr`);
   private currentServerAddrMap = new Map();
 
   /**

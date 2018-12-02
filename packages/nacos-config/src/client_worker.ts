@@ -31,7 +31,8 @@ export class ClientWorker extends Base implements IClientWorker {
   private isLongPulling = false;
   private subscriptions = new Map();
   protected loggerDomain = 'Nacos';
-  private debug = require('debug')(`${this.loggerDomain}:${process.pid}:ins-${this.uuid}:client_worker`);
+  private debugPrefix = this.loggerDomain.toLowerCase();
+  private debug = require('debug')(`${this.debugPrefix}:${process.pid}:ins-${this.uuid}:client_worker`);
   protected apiRoutePath: API_ROUTE = {
     GET: `/v1/cs/configs`,
     BATCH_GET: `/v1/cs/configs`,
@@ -93,6 +94,7 @@ export class ClientWorker extends Base implements IClientWorker {
    * @param {Function} listener - listener
    */
   subscribe(info, listener) {
+    this.debug('calling subscribe, dataId: %s, group: %s', info.dataId, info.group);
     const { dataId, group } = info;
     const key = this.formatKey(info);
     this.on(key, listener);
@@ -153,6 +155,8 @@ export class ClientWorker extends Base implements IClientWorker {
         item.md5 = md5;
         item.content = content;
         // 异步化，避免处理逻辑异常影响到 nacos 内部
+        // 这里将获取的数据直接事件的方式返回给 subscribe 一开始监听的地方
+        this.debug('get new data and callback to listener', item);
         setImmediate(() => this.emit(key, content));
       }
     }
@@ -199,6 +203,7 @@ export class ClientWorker extends Base implements IClientWorker {
     const tenant = this.namespace;
     const probeUpdate = [];
     for (const { dataId, group, md5 } of this.subscriptions.values()) {
+      this.debug('calling startLongPulling(checkServerConfigInfo), dataId: %s, group: %s', dataId, group);
       probeUpdate.push(dataId, WORD_SEPARATOR);
       probeUpdate.push(group, WORD_SEPARATOR);
 
@@ -212,7 +217,6 @@ export class ClientWorker extends Base implements IClientWorker {
 
     const postData = {};
     postData[ this.listenerDataKey ] = probeUpdate.join('');
-
     const content = await this.httpAgent.request(this.apiRoutePath.LISTENER, {
       method: 'POST',
       data: postData,
@@ -223,7 +227,10 @@ export class ClientWorker extends Base implements IClientWorker {
     });
     this.debug('long pulling takes %ds', (Date.now() - beginTime) / 1000);
     const updateList = this.parseUpdateDataIdResponse(content);
+    // 说明这个 id 列表有更新
     if (updateList && updateList.length) {
+      this.debug('data has changed and will be sync', updateList);
+      // 去同步这个 ip 列表的配置
       await this.syncConfigs(updateList);
     }
   }

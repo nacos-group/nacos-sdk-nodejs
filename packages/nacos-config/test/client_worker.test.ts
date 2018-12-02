@@ -34,7 +34,7 @@ function getClient(configuration) {
   });
 }
 
-describe('test/client_worker.test.ts', () => {
+describe.only('test/client_worker.test.ts', () => {
 
   describe('test features in direct mode', () => {
 
@@ -67,6 +67,7 @@ describe('test/client_worker.test.ts', () => {
     after(async () => {
       client.close();
       await client.remove('com.taobao.hsf.redis', 'DEFAULT_GROUP');
+      await client.remove('test-dataId-encoding-utf8', 'test-group');
       await rimraf(cacheDir);
     });
 
@@ -153,6 +154,24 @@ describe('test/client_worker.test.ts', () => {
 
       content = await client.getConfig('test-dataId-unicode', 'test-group');
       assert(content === 'tj');
+    });
+
+    it('should test publish encoding content', async () => {
+      await client.publishSingle('test-dataId-encoding', 'test-group', '你好');
+      let data = '';
+
+      client.subscribe({
+        dataId: 'test-dataId-encoding',
+        group: 'test-group',
+      }, (content) => {
+        console.log('/11111');
+        data = content;
+      });
+
+      await sleep(1000);
+      await client.publishSingle('test-dataId-encoding', 'test-group', '你好啊');
+      await sleep(30000);
+      assert(data === '你好啊');
     });
 
     it('should remove config from nacos server', async () => {

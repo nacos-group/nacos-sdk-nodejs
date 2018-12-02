@@ -63,3 +63,4 @@ typings/
 .idea
 dist/
 package-lock.json
+.cache

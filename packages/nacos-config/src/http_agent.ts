@@ -25,7 +25,8 @@ export class HttpAgent {
   options;
   currentServer: string;
   protected loggerDomain = 'Nacos';
-  private debug = require('debug')(`${this.loggerDomain}:${process.pid}:http_agent`);
+  private debugPrefix = this.loggerDomain.toLowerCase();
+  private debug = require('debug')(`${this.debugPrefix}:${process.pid}:http_agent`);
 
   constructor(options) {
     this.options = options;
