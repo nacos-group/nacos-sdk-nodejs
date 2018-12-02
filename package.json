@@ -1,6 +1,6 @@
 {
   "name": "nacos",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "nacos (https://nacos.io/en-us/) nodejs sdk",
   "scripts": {
     "contributors": "contributors -f plain -o AUTHORS",
