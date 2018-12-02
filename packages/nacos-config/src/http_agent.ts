@@ -41,7 +41,6 @@ export class HttpAgent {
 
   /**
    * HTTP 请求客户端
-   * @property {Urllib} DiamondClient#urllib
    */
   get httpclient() {
     return this.configuration.get(ClientOptionKeys.HTTPCLIENT) || urllib;
@@ -77,6 +76,10 @@ export class HttpAgent {
 
   get clusterName() {
     return this.configuration.get(ClientOptionKeys.CLUSTER_NAME) || 'serverlist';
+  }
+
+  get defaultEncoding() {
+    return this.configuration.get(ClientOptionKeys.DEFAULT_ENCODING) || 'utf8';
   }
 
 
@@ -126,7 +129,7 @@ export class HttpAgent {
 
     let requestData = data;
     if (encode) {
-      requestData = encodingParams(data);
+      requestData = encodingParams(data, this.defaultEncoding);
     }
 
     do {

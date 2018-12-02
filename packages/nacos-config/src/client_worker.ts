@@ -17,11 +17,10 @@
 import { API_ROUTE, ClientOptionKeys, NacosHttpError, IClientWorker, IConfiguration } from './interface';
 import { LINE_SEPARATOR, WORD_SEPARATOR } from './const';
 import { getMD5String } from './utils';
+import * as path from 'path';
+import * as is from 'is-type-of';
 
 const Base = require('sdk-base');
-const co = require('co');
-const path = require('path');
-const is = require('is-type-of');
 const gather = require('co-gather');
 const { sleep } = require('mz-modules');
 
@@ -77,6 +76,10 @@ export class ClientWorker extends Base implements IClientWorker {
     return this.configuration.get(ClientOptionKeys.NAMESPACE);
   }
 
+  get defaultEncoding() {
+    return this.configuration.get(ClientOptionKeys.DEFAULT_ENCODING) || 'utf8';
+  }
+
   close() {
     this.isClose = true;
     this.removeAllListeners();
@@ -88,7 +91,6 @@ export class ClientWorker extends Base implements IClientWorker {
    *   - {String} dataId - id of the data you want to subscribe
    *   - {String} [group] - group name of the data
    * @param {Function} listener - listener
-   * @return {DiamondEnv} self
    */
   subscribe(info, listener) {
     const { dataId, group } = info;
@@ -108,7 +110,7 @@ export class ClientWorker extends Base implements IClientWorker {
       (async () => {
         try {
           await this.syncConfigs([ item ]);
-          this.startLongPulling();
+          await this.startLongPulling();
         } catch (err) {
           this._error(err);
         }
@@ -136,8 +138,8 @@ export class ClientWorker extends Base implements IClientWorker {
         continue;
       }
       if (result.isError) {
-        const err: NacosHttpError = new Error(`[DiamondEnv] getConfig failed for dataId: ${item.dataId}, group: ${item.group}, error: ${result.error}`);
-        err.name = 'DiamondSyncConfigError';
+        const err: NacosHttpError = new Error(`[${this.loggerDomain}#ClientWorker] getConfig failed for dataId: ${item.dataId}, group: ${item.group}, error: ${result.error}`);
+        err.name = `${this.loggerDomain}SyncConfigError`;
         err.dataId = item.dataId;
         err.group = item.group;
         this._error(err);
@@ -145,12 +147,12 @@ export class ClientWorker extends Base implements IClientWorker {
       }
 
       const content = result.value;
-      const md5 = getMD5String(content);
+      const md5 = getMD5String(content, this.defaultEncoding);
       // 防止应用启动时，并发请求，导致同一个 key 重复触发
       if (item.md5 !== md5) {
         item.md5 = md5;
         item.content = content;
-        // 异步化，避免处理逻辑异常影响到 diamond 内部
+        // 异步化，避免处理逻辑异常影响到 nacos 内部
         setImmediate(() => this.emit(key, content));
       }
     }
@@ -161,28 +163,30 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {void}
    * @private
    */
-  private startLongPulling() {
+  private async startLongPulling() {
     // 防止重入
     if (this.isLongPulling) {
       return;
     }
     this.isLongPulling = true;
-    co(async () => {
-      while (!this.isClose && this.subscriptions.size > 0) {
-        try {
-          await this.checkServerConfigInfo();
-        } catch (err) {
-          err.name = 'DiamondLongPullingError';
-          this._error(err);
-          await sleep(2000);
+
+    (async () => {
+      try {
+        while (!this.isClose && this.subscriptions.size > 0) {
+          try {
+            await this.checkServerConfigInfo();
+          } catch (err) {
+            err.name = `${this.loggerDomain}LongPullingError`;
+            this._error(err);
+            await sleep(2000);
+          }
         }
+        this.isLongPulling = false;
+      } catch (err) {
+        this.isLongPulling = false;
+        this._error(err);
       }
-    }).then(() => {
-      this.isLongPulling = false;
-    }).catch(err => {
-      this.isLongPulling = false;
-      this._error(err);
-    });
+    })();
   }
 
   private async checkServerConfigInfo() {
@@ -224,7 +228,7 @@ export class ClientWorker extends Base implements IClientWorker {
     }
   }
 
-  // 解析 diamond 返回的 long pulling 结果
+  // 解析 nacos 返回的 long pulling 结果
   private parseUpdateDataIdResponse(content) {
     const updateList = [];
     decodeURIComponent(content)
@@ -251,7 +255,6 @@ export class ClientWorker extends Base implements IClientWorker {
    *   - {String} dataId - id of the data you want to subscribe
    *   - {String} group - group name of the data
    * @param {Function} listener - listener
-   * @return {DiamondEnv} self
    */
   unSubscribe(info, listener?) {
     const key = this.formatKey(info);

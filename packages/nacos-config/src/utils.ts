@@ -30,21 +30,21 @@ const REG_VALID_CHAR = /^[a-z0-9A-Z_\.\-\:]+$/;
  * @param {String} val - 字符串
  * @return {String} md5
  */
-export function getMD5String(val) {
+export function getMD5String(val, encodingFormat = 'utf8') {
   if (is.nullOrUndefined(val)) {
     return '';
   }
   const md5 = crypto.createHash('md5');
   // 注意：这里的编码是 gbk ！！！
-  md5.update(iconv.encode(val, 'gbk'));
+  md5.update(iconv.encode(val, encodingFormat));
   return md5.digest('hex');
 }
 
-export function encodingParams(data) {
+export function encodingParams(data, encodingFormat = 'utf8') {
   return qs.stringify(data, sep, eq, {
     encodeURIComponent(str) {
-      // diamond server 默认是 GBK 编码
-      return urlencode.encode(str, 'utf8');
+      // nacos 默认 utf8，其他是 gbk
+      return urlencode.encode(str, encodingFormat);
     },
   });
 }

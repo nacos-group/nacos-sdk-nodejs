@@ -97,7 +97,7 @@ export class DataClient extends Base implements BaseClient {
    *   - {String} [group] - group name of the data
    *   - {String} [unit] - which unit you want to connect, default is current unit
    * @param {Function} listener - listener
-   * @return {DiamondClient} self
+   * @return {DataClient} self
    */
   subscribe(info, listener) {
     const { dataId, group } = info;
@@ -114,7 +114,7 @@ export class DataClient extends Base implements BaseClient {
    *   - {String} [group] - group name of the data
    *   - {String} [unit] - which unit you want to connect, default is current unit
    * @param {Function} listener - listener
-   * @return {DiamondClient} self
+   * @return {DataClient} self
    */
   unSubscribe(info, listener) {
     const { dataId, group } = info;

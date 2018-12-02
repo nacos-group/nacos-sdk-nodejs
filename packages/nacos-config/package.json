@@ -10,7 +10,6 @@
   "author": "czy88840616@gmail.com",
   "dependencies": {
     "cluster-client": "^2.1.1",
-    "co": "^4.6.0",
     "co-gather": "^1.0.0",
     "debug": "^3.1.0",
     "iconv-lite": "^0.4.24",

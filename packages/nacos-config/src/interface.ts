@@ -275,6 +275,7 @@ export enum ClientOptionKeys {
   REQUEST_TIMEOUT = 'requestTimeout',
   HTTP_AGENT = 'httpAgent',
   SERVER_MGR = 'serverMgr',
+  DEFAULT_ENCODING = 'utf8', // 请求的默认编码
 }
 
 export interface IConfiguration {
