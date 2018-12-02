@@ -57,11 +57,10 @@ typings/
 # dotenv environment variables file
 .env
 
-.DS_Store
-
 # next.js build output
 .next
 
 .idea
 dist/
 package-lock.json
+.cache

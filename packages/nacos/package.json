@@ -1,4 +1,42 @@
 {
-  "name": "nacos",
-  "version": "0.0.0"
+  "name": "nacos-client",
+  "version": "1.0.0",
+  "description": "nacos client main package",
+  "keywords": [
+    "nacos",
+    "cloud"
+  ],
+  "main": "dist/index.js",
+  "author": "czy88840616@gmail.com",
+  "dependencies": {
+    "nacos-config": "^1.0.0",
+    "nacos-naming": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/mocha": "^5.2.5",
+    "@types/node": "^10.9.4",
+    "midway-bin": "^0.3.2",
+    "mm": "^2.4.1",
+    "pedding": "^1.1.0",
+    "tslint": "^5.11.0",
+    "typescript": "^2.8.0",
+    "contributors": "^0.5.1"
+  },
+  "engines": {
+    "node": ">= 8.0.0"
+  },
+  "scripts": {
+    "autod": "midway-bin autod",
+    "lint": "tslint . --ext .ts",
+    "test": "npm run test-local",
+    "test-local": "TEST_REPORTER=spec midway-bin test --ts",
+    "cov": "TEST_REPORTER=spec midway-bin cov --ts",
+    "contributors": "contributors",
+    "ci": "npm run lint && npm run cov",
+    "build": "midway-bin build --ts"
+  },
+  "files": [
+    "d.ts",
+    "dist"
+  ]
 }
