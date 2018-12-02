@@ -34,7 +34,7 @@ function getClient(configuration) {
   });
 }
 
-describe.only('test/client_worker.test.ts', () => {
+describe('test/client_worker.test.ts', () => {
 
   describe('test features in direct mode', () => {
 
@@ -67,7 +67,7 @@ describe.only('test/client_worker.test.ts', () => {
     after(async () => {
       client.close();
       await client.remove('com.taobao.hsf.redis', 'DEFAULT_GROUP');
-      await client.remove('test-dataId-encoding-utf8', 'test-group');
+      await client.remove('test-dataId-encoding', 'test-group');
       await rimraf(cacheDir);
     });
 
@@ -164,7 +164,6 @@ describe.only('test/client_worker.test.ts', () => {
         dataId: 'test-dataId-encoding',
         group: 'test-group',
       }, (content) => {
-        console.log('/11111');
         data = content;
       });
 

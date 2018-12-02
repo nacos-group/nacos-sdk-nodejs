@@ -35,7 +35,7 @@ export function getMD5String(val, encodingFormat = 'utf8') {
     return '';
   }
   const md5 = crypto.createHash('md5');
-  // 注意：这里的编码是 gbk ！！！
+  // 注意：这里的编码
   md5.update(iconv.encode(val, encodingFormat));
   return md5.digest('hex');
 }
