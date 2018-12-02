@@ -24,7 +24,7 @@ export { Snapshot } from './snapshot';
 
 const APIClientBase = require('cluster-client').APIClientBase;
 
-class NacosClient extends APIClientBase implements BaseClient {
+export class NacosConfigClient extends APIClientBase implements BaseClient {
 
   /**
    * cluster-client wrapper client
@@ -208,5 +208,3 @@ class NacosClient extends APIClientBase implements BaseClient {
     return DataClient;
   }
 }
-
-export const Client = NacosClient;

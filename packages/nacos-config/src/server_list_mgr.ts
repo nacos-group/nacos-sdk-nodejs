@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 import { Snapshot } from './snapshot';
-import { ClientOptionKeys, NacosHttpError, IConfiguration, IServerListManager } from './interface';
+import { ClientOptionKeys, NacosHttpError, IConfiguration, IServerListManager, ISnapshot } from './interface';
 import { CURRENT_UNIT } from './const';
 import * as path from 'path';
 
@@ -78,7 +78,7 @@ export class ServerListManager extends Base implements IServerListManager {
     return this.options.configuration;
   }
 
-  get snapshot() {
+  get snapshot(): ISnapshot {
     if(!this.configuration.has(ClientOptionKeys.SNAPSHOT)) {
       this.configuration.set(ClientOptionKeys.SNAPSHOT, new Snapshot(this.options));
     }
@@ -89,26 +89,26 @@ export class ServerListManager extends Base implements IServerListManager {
     return this.configuration.get(ClientOptionKeys.HTTPCLIENT);
   }
 
-  get nameServerAddr() {
+  get nameServerAddr(): string {
     if (this.configuration.has(ClientOptionKeys.ENDPOINT)) {
       return this.configuration.get(ClientOptionKeys.ENDPOINT);
     }
     return this.configuration.get(ClientOptionKeys.NAMESERVERADDR);
   }
 
-  get refreshInterval() {
+  get refreshInterval(): number {
     return this.configuration.get(ClientOptionKeys.REFRESH_INTERVAL);
   }
 
-  get contextPath() {
+  get contextPath(): string {
     return this.configuration.get(ClientOptionKeys.CONTEXTPATH) || 'nacos';
   }
 
-  get clusterName() {
+  get clusterName(): string {
     return this.configuration.get(ClientOptionKeys.CLUSTER_NAME) || 'serverlist';
   }
 
-  get requestTimeout() {
+  get requestTimeout(): number {
     return this.configuration.get(ClientOptionKeys.REQUEST_TIMEOUT);
   }
 
@@ -276,7 +276,7 @@ export class ServerListManager extends Base implements IServerListManager {
   }
 
   // for test
-  clearaServerCache() {
+  clearServerCache() {
     this.serverListCache.clear();
   }
 }

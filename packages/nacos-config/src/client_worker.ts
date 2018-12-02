@@ -14,11 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { API_ROUTE, ClientOptionKeys, NacosHttpError, IClientWorker, IConfiguration } from './interface';
+import { API_ROUTE, ClientOptionKeys, NacosHttpError, IClientWorker, IConfiguration, ISnapshot } from './interface';
 import { LINE_SEPARATOR, WORD_SEPARATOR } from './const';
 import { getMD5String } from './utils';
 import * as path from 'path';
 import * as is from 'is-type-of';
+import { HttpAgent } from './http_agent';
 
 const Base = require('sdk-base');
 const gather = require('co-gather');
@@ -57,27 +58,27 @@ export class ClientWorker extends Base implements IClientWorker {
     return this.options.configuration;
   }
 
-  get appName() {
+  get appName(): string {
     return this.configuration.get(ClientOptionKeys.APPNAME);
   }
 
-  get snapshot() {
+  get snapshot(): ISnapshot {
     return this.configuration.get(ClientOptionKeys.SNAPSHOT);
   }
 
-  get unit() {
+  get unit(): string {
     return this.configuration.get(ClientOptionKeys.UNIT);
   }
 
-  get httpAgent() {
+  get httpAgent(): HttpAgent {
     return this.configuration.get(ClientOptionKeys.HTTP_AGENT);
   }
 
-  get namespace() {
+  get namespace(): string {
     return this.configuration.get(ClientOptionKeys.NAMESPACE);
   }
 
-  get defaultEncoding() {
+  get defaultEncoding(): string {
     return this.configuration.get(ClientOptionKeys.DEFAULT_ENCODING) || 'utf8';
   }
 

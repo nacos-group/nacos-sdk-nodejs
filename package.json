@@ -11,7 +11,7 @@
     "test": "lerna run test",
     "cov": "sh scripts/cov.sh",
     "ci": "npm run cov",
-    "build": "lerna run build"
+    "build": "lerna run build && cp ./README.md ./packages/nacos/README.md"
   },
   "repository": {
     "type": "git",

@@ -20,9 +20,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { HttpAgent } from '../src/http_agent';
 import { createDefaultConfiguration } from './utils';
+import * as mm from 'mm';
+import * as assert from 'assert';
 
-const mm = require('mm');
-const assert = require('assert');
 const pedding = require('pedding');
 const httpclient = require('urllib');
 const { rimraf, sleep } = require('mz-modules');
@@ -91,7 +91,7 @@ describe('test/client_worker.test.ts', () => {
       client.unSubscribe(reg);
     });
 
-    it('should getConfig from diamond server', async () => {
+    it('should getConfig from nacos server', async () => {
       const content = await client.getConfig('com.taobao.hsf.redis', 'DEFAULT_GROUP');
       assert(/^\d+\.\d+\.\d+\.\d+\:\d+$/.test(content));
     });
@@ -333,7 +333,7 @@ describe('test/client_worker.test.ts', () => {
       assert(content[ 1 ].content === 'test-content');
     });
 
-    xdescribe('mock error', () => {
+    describe('mock error', () => {
       before(async () => {
         client = getClient(configuration);
         await client.ready();
@@ -350,7 +350,6 @@ describe('test/client_worker.test.ts', () => {
       });
 
       it('should remove failed', async () => {
-        await client.updateCurrentServer();
         mm.http.requestError(/^\//, null, 'mock res error');
         let error;
         try {
@@ -363,7 +362,7 @@ describe('test/client_worker.test.ts', () => {
         assert(/mock res error/.test(error.message));
       });
 
-      it('should get null when batchGetConfig failed', async () => {
+      xit('should get null when batchGetConfig failed', async () => {
         mm.http.requestError(/^\//, null, 'mock res error');
         let error;
         try {
@@ -376,26 +375,20 @@ describe('test/client_worker.test.ts', () => {
         assert(/mock res error/.test(error.message));
       });
 
-      it('should init failed', async () => {
-        mm.empty(serverMgr, 'getOne');
+      it('should init failed', (done) => {
         mm.empty(snapshot, 'get');
-        const client = new ClientWorker(Object.assign({
-          appName: 'test',
-          httpclient,
-          snapshot,
-          serverMgr
-        }, defaultOptions));
-        let error;
-        try {
-          await client.getConfig('com.taobao.hsf.redis', 'HSF');
-        } catch (err) {
-          error = err;
-        }
-        assert(error && error.name === 'DiamondServerUnavailableError');
-        assert(error.unit === 'CURRENT_UNIT');
+        mm(serverMgr, 'serverListCache', new Map());
+        mm(serverMgr, 'currentServerAddrMap', new Map());
+        mm.http.request(/^\//, []);
+        serverMgr.on('error', (error) => {
+          assert(error && error.name === 'NacosServerHostEmptyError');
+          assert(error.unit === 'CURRENT_UNIT');
+          done();
+        });
+        client.getConfig('com.taobao.hsf.redis', 'HSF');
       });
 
-      it('should emit DiamondBatchDeserializeError', async () => {
+      xit('should emit NacosBatchDeserializeError', async () => {
         mm.data(client, 'request', '{');
         let error;
         try {
@@ -403,11 +396,11 @@ describe('test/client_worker.test.ts', () => {
         } catch (err) {
           error = err;
         }
-        assert(error && error.name === 'DiamondBatchDeserializeError');
+        assert(error && error.name === 'NacosBatchDeserializeError');
         assert(error.data === '{');
       });
 
-      it('should emit DiamondBatchDeserializeError', async () => {
+      xit('should emit NacosBatchDeserializeError', async () => {
         mm.data(client, 'request', '{');
         let error;
         try {
@@ -415,16 +408,15 @@ describe('test/client_worker.test.ts', () => {
         } catch (err) {
           error = err;
         }
-        assert(error && error.name === 'DiamondBatchDeserializeError');
+        assert(error && error.name === 'NacosBatchDeserializeError');
         assert(error.data === '{');
       });
 
-      it('should emit DiamondLongPullingError event', done => {
-        const client = getClient(configuration);
+      it('should emit NacosLongPullingError event', done => {
         mm.error(client, 'checkServerConfigInfo');
         mm.empty(client.snapshot, 'get');
         client.once('error', err => {
-          assert(err.name === 'DiamondLongPullingError');
+          assert(err.name === 'NacosLongPullingError');
           assert(err.message === 'mm mock error');
           client.unSubscribe({
             dataId: 'com.taobao.hsf.redis',
@@ -439,12 +431,13 @@ describe('test/client_worker.test.ts', () => {
         }, content => console.log(content));
       });
 
-      it('should emit DiamondSyncConfigError event', (done) => {
-        const client = getClient(configuration);
+      xit('should emit NacosSyncConfigError event', (done) => {
         // await client.updateCurrentServer();
-        const _request = client.request.bind(client);
+        const _request = httpAgent.request.bind(httpAgent);
+        mm(serverMgr, 'serverListCache', new Map());
+        mm(serverMgr, 'currentServerAddrMap', new Map());
         mm.empty(client.snapshot, 'get');
-        mm(client, 'request', async (path, options) => {
+        mm(httpAgent, 'request', async (path, options) => {
           if (options.method !== 'POST') {
             throw new Error('mm mock error');
           }
@@ -453,7 +446,7 @@ describe('test/client_worker.test.ts', () => {
 
         done = pedding(done, 2);
         client.once('error', function (err) {
-          assert(err.name === 'DiamondSyncConfigError');
+          assert(err.name === 'NacosSyncConfigError');
           assert(err.message.indexOf('mm mock error') >= 0);
           assert(err.dataId === 'com.taobao.hsf.redis');
           assert(err.group === 'HSF');
@@ -472,10 +465,10 @@ describe('test/client_worker.test.ts', () => {
         });
       });
 
-      it('should emit DiamondConnectionTimeoutError syncConfigError event', done => {
-        mm(client.options, 'requestTimeout', 1);
+      it('should emit NacosConnectionTimeoutError syncConfigError event', done => {
+        mm(httpAgent, 'requestTimeout', 1);
         client.once('error', function (err) {
-          assert(err.name === 'DiamondSyncConfigError');
+          assert(err.name === 'NacosSyncConfigError');
           assert(err.dataId === 'com.taobao.hsf.redis2');
           client.unSubscribe({
             dataId: 'com.taobao.hsf.redis2',
@@ -493,15 +486,15 @@ describe('test/client_worker.test.ts', () => {
       });
 
       it('should throw error if http status is 409', async () => {
-        mm.data(client.httpclient, 'request', { status: 409 });
-        mm.empty(client.snapshot, 'get');
+        mm.data(httpAgent.httpclient, 'request', { status: 409 });
+        mm.empty(snapshot, 'get');
         let error;
         try {
           await client.getConfig('com.taobao.hsf.redis', 'HSF');
         } catch (err) {
           error = err;
         }
-        assert(error && error.name === 'DiamondServerConflictError');
+        assert(error && error.name === 'NacosServerConflictError');
       });
     });
   });

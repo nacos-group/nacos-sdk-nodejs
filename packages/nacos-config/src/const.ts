@@ -41,5 +41,6 @@ export const DEFAULT_OPTIONS = {
   clusterName: 'serverlist',
   unit: CURRENT_UNIT,
   ssl: false,
-  secretKey: ''
+  secretKey: '',
+  defaultEncoding: 'utf8',
 };

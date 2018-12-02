@@ -30,13 +30,20 @@ describe('test/server_list_mgr.test.ts', () => {
 
   describe('find server addresss list by server', () => {
     let serverManager: ServerListManager;
+    const defaultOptions = {
+      appName: 'test',
+      endpoint: 'acm.aliyun.com',
+      namespace: '81597370-5076-4216-9df5-538a2b55bac3',
+      accessKey: '4c796a4dcd0d4f5895d4ba83a296b489',
+      secretKey: 'UjLemP8inirhjMg1NZyY0faOk1E=',
+      httpclient,
+      ssl: false,
+      cacheDir
+    };
+
+    const configuration = createDefaultConfiguration(defaultOptions);
 
     before(async () => {
-      const configuration = createDefaultConfiguration({
-        httpclient,
-        endpoint: 'acm.aliyun.com',
-        cacheDir,
-      });
       serverManager = new ServerListManager({ configuration });
       await serverManager.ready();
     });
@@ -161,7 +168,7 @@ describe('test/server_list_mgr.test.ts', () => {
       });
 
       it('should update server list', async () => {
-        serverManager.clearaServerCache();
+        serverManager.clearServerCache();
         mm.data(serverManager, 'request', null);
         mm.data(serverManager.snapshot, 'get', null);
         mm(serverManager, 'currentServerAddrMap', new Map());

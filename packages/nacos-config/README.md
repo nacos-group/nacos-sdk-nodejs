@@ -7,10 +7,10 @@
 ## Usage
 
 ```js
-import {ACMClient} from 'nacos';   // ts
-const ACMClient = require('acm-client').ACMClient; //js
+import {NacosConfigClient} from 'nacos';   // ts
+const NacosConfigClient = require('nacos').NacosConfigClient; //js
 
-const acm = new ACMClient({
+const configClient = new NacosConfigClient({
   endpoint: 'acm.aliyun.com', // acm 控制台查看
   namespace: '***************', // acm 控制台查看
   accessKey: '***************', // acm 控制台查看
@@ -19,11 +19,11 @@ const acm = new ACMClient({
 });
 
 // 主动拉取配置
-const content= await acm.getConfig('test', 'DEFAULT_GROUP');
+const content= await configClient.getConfig('test', 'DEFAULT_GROUP');
 console.log('getConfig = ',content);
 
 // 监听数据更新
-acm.subscribe({
+configClient.subscribe({
   dataId: 'test',
   group: 'DEFAULT_GROUP',
 }, content => {
@@ -31,23 +31,16 @@ acm.subscribe({
 });
 
 // 发布配置接口
-const content= await acm.publishSingle('test', 'DEFAULT_GROUP', '测试');
+const content= await configClient.publishSingle('test', 'DEFAULT_GROUP', '测试');
 console.log('getConfig = ',content);
 
 // 删除配置
-await acm.remove('test', 'DEFAULT_GROUP');
-
-// 批量获取配置
-const content = await amc.batchGetConfig(['test', 'test1'], 'DEFAULT_GROUP');
-
-// 获取所有配置
-const configList = await amc.getAllConfigInfo();
-```
+await configClient.remove('test', 'DEFAULT_GROUP');
 
 ### Error Events 异常处理
 
 ```js
-acm.on('error', function (err) {
+configClient.on('error', function (err) {
   // 可以在这里统一进行日志的记录
   // 如果不监听错误事件，所有的异常都将会打印到 stderr
 });

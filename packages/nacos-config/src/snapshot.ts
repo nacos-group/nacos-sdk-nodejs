@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { ClientOptionKeys, IConfiguration, SnapShotData } from './interface';
+import { ClientOptionKeys, IConfiguration, ISnapshot, SnapShotData } from './interface';
 import * as path from 'path';
 import * as assert from 'assert';
 
@@ -24,7 +24,7 @@ const { mkdirp, rimraf } = require('mz-modules');
 const debug = require('debug')('diamond-client:snapshot');
 const fs = require('mz/fs');
 
-export class Snapshot extends Base {
+export class Snapshot extends Base implements ISnapshot {
 
   private uuid = Math.random();
 

@@ -223,7 +223,11 @@ export interface IServerListManager {
 }
 
 export interface ISnapshot {
-  // on(evt: string, fn: (err: Error) => void): void;
+  cacheDir;
+  get(key: string): any;
+  save(key: string, value: any);
+  delete(key: string);
+  batchSave(arr: Array<SnapShotData>);
 }
 
 export interface NacosHttpError extends Error {
@@ -253,6 +257,7 @@ export interface ClientOptions {
   contextPath?: string;
   clusterName?: string;
   requestTimeout?: number;
+  defaultEncoding?: string;
 }
 
 export enum ClientOptionKeys {
@@ -280,15 +285,10 @@ export enum ClientOptionKeys {
 
 export interface IConfiguration {
   merge(config: any): IConfiguration;
-
   attach(config: any): IConfiguration;
-
   get(configKey?: ClientOptionKeys): any;
-
   has(configKey: ClientOptionKeys): boolean;
-
   set(configKey: ClientOptionKeys, target: any): IConfiguration;
-
   modify(configKey: ClientOptionKeys, changeHandler: (target: any) => any): IConfiguration;
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
-source `dirname $0`/build.sh
+npm run build
 git add .
 lerna publish $* --conventional-commits
