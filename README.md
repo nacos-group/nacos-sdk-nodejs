@@ -1,9 +1,9 @@
 # nacos-sdk-nodejs
-=======
 
 [![NPM version][npm-image]][npm-url]
 [![build status][travis-image]][travis-url]
 [![David deps][david-image]][david-url]
+[![lerna](https://img.shields.io/badge/maintained%20with-lerna-cc00ff.svg)](https://lernajs.io/)
 
 [npm-image]: https://img.shields.io/npm/v/ali-ons.svg?style=flat-square
 [npm-url]: https://npmjs.org/package/ali-ons

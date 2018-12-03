@@ -1,6 +1,6 @@
 {
   "name": "nacos-config",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "nacos config client",
   "keywords": [
     "nacos-config",
@@ -47,6 +47,7 @@
   },
   "files": [
     "d.ts",
-    "dist"
+    "dist",
+    "src"
   ]
 }
