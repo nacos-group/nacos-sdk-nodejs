@@ -4,7 +4,10 @@
   "description": "nacos client main package",
   "keywords": [
     "nacos",
-    "cloud"
+    "cloud",
+    "native",
+    "eggjs",
+    "midwayjs"
   ],
   "main": "dist/index.js",
   "author": "czy88840616@gmail.com",
@@ -38,5 +41,15 @@
   "files": [
     "d.ts",
     "dist"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nacos-group/nacos-sdk-nodejs.git"
+  },
+  "license": "Apache",
+
+  "bugs": {
+    "url": "https://github.com/nacos-group/nacos-sdk-nodejs/issues"
+  },
+  "homepage": "https://github.com/nacos-group/nacos-sdk-nodejs#readme"
 }

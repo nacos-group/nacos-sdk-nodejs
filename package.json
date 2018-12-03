@@ -13,17 +13,6 @@
     "ci": "npm run cov",
     "build": "lerna run build && cp ./README.md ./packages/nacos/README.md"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/nacos-group/nacos-sdk-nodejs.git"
-  },
-  "keywords": [
-    "nacos",
-    "cloud",
-    "native",
-    "eggjs",
-    "midwayjs"
-  ],
   "license": "Apache",
   "bugs": {
     "url": "https://github.com/nacos-group/nacos-sdk-nodejs/issues"
