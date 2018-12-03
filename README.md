@@ -105,10 +105,10 @@ await configClient.remove('test', 'DEFAULT_GROUP');
   - clusters <Array> Cluster names
 - `getServerStatus()` Get the status of nacos server, 'UP' or 'DOWN'.
 - `subscribe(info, listener)` Subscribe the instances of the service
-  - info <Object>|<String> service info, if type is string, it's the serviceName
+  - info <Object | String> service info, if type is string, it's the serviceName
   - listener <Function> the listener function
-- `unSubscribe(info, [listener])` Unsubscribe the instances of the service
-  - info <Object>|<String> service info, if type is string, it's the serviceName
+- unSubscribe(info, [listener]) Unsubscribe the instances of the service
+  - info <Object | String> service info, if type is string, it's the serviceName
   - listener <Function> the listener function, if not provide, will unSubscribe all listeners under this service
 
 
