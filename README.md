@@ -5,12 +5,12 @@
 [![David deps][david-image]][david-url]
 [![lerna](https://img.shields.io/badge/maintained%20with-lerna-cc00ff.svg)](https://lernajs.io/)
 
-[npm-image]: https://img.shields.io/npm/v/ali-ons.svg?style=flat-square
-[npm-url]: https://npmjs.org/package/ali-ons
-[travis-image]: https://img.shields.io/travis/ali-sdk/ali-ons.svg?style=flat-square
-[travis-url]: https://travis-ci.org/ali-sdk/ali-ons
-[david-image]: https://img.shields.io/david/ali-sdk/ali-ons.svg?style=flat-square
-[david-url]: https://david-dm.org/ali-sdk/ali-ons
+[npm-image]: https://img.shields.io/npm/v/nacos.svg?style=flat-square
+[npm-url]: https://npmjs.org/package/nacos
+[travis-image]: https://img.shields.io/travis/nacos-group/nacos.svg?style=flat-square
+[travis-url]: https://travis-ci.org/nacos-group/nacos
+[david-image]: https://img.shields.io/david/nacos-group/nacos.svg?style=flat-square
+[david-url]: https://david-dm.org/nacos-group/nacos
 
 
 [Nacos](https://nacos.io/en-us/) Node.js SDK
