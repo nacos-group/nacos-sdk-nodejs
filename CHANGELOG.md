@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.2.1](https://github.com/nacos-group/nacos-sdk-nodejs/compare/v0.2.0...v0.2.1) (2018-12-03)
+
+**Note:** Version bump only for package nacos
+
+
+
+
+
 # 0.2.0 (2018-12-03)
 
 
