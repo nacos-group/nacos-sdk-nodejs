@@ -1,16 +1,16 @@
 # nacos-sdk-nodejs
-=======
 
 [![NPM version][npm-image]][npm-url]
 [![build status][travis-image]][travis-url]
 [![David deps][david-image]][david-url]
+[![lerna](https://img.shields.io/badge/maintained%20with-lerna-cc00ff.svg)](https://lernajs.io/)
 
-[npm-image]: https://img.shields.io/npm/v/ali-ons.svg?style=flat-square
-[npm-url]: https://npmjs.org/package/ali-ons
-[travis-image]: https://img.shields.io/travis/ali-sdk/ali-ons.svg?style=flat-square
-[travis-url]: https://travis-ci.org/ali-sdk/ali-ons
-[david-image]: https://img.shields.io/david/ali-sdk/ali-ons.svg?style=flat-square
-[david-url]: https://david-dm.org/ali-sdk/ali-ons
+[npm-image]: https://img.shields.io/npm/v/nacos.svg?style=flat-square
+[npm-url]: https://npmjs.org/package/nacos
+[travis-image]: https://img.shields.io/travis/nacos-group/nacos.svg?style=flat-square
+[travis-url]: https://travis-ci.org/nacos-group/nacos
+[david-image]: https://img.shields.io/david/nacos-group/nacos.svg?style=flat-square
+[david-url]: https://david-dm.org/nacos-group/nacos
 
 
 [Nacos](https://nacos.io/en-us/) Node.js SDK
@@ -105,12 +105,13 @@ await configClient.remove('test', 'DEFAULT_GROUP');
   - clusters <Array> Cluster names
 - `getServerStatus()` Get the status of nacos server, 'UP' or 'DOWN'.
 - `subscribe(info, listener)` Subscribe the instances of the service
-  - info <Object>|<String> service info, if type is string, it's the serviceName
+  - info <Object | String> service info, if type is string, it's the serviceName
   - listener <Function> the listener function
-- `unSubscribe(info, [listener])` Unsubscribe the instances of the service
-  - info <Object>|<String> service info, if type is string, it's the serviceName
+- unSubscribe(info, [listener]) Unsubscribe the instances of the service
+  - info <Object | String> service info, if type is string, it's the serviceName
   - listener <Function> the listener function, if not provide, will unSubscribe all listeners under this service
-  
+
+
 ### Config Service
 
 - `async function getConfig(dataId, group)`
@@ -132,7 +133,7 @@ await configClient.remove('test', 'DEFAULT_GROUP');
   - {Object} info
     - {String} dataId - data id
     - {String} group - group
-  - {Function} listener - callback handler（optional，remove all listener when it was null）
+  - {Function} listener - callback handler（optional，remove all listener when it is null）
 
 ## Questions & Suggestions
 
