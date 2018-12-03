@@ -52,40 +52,6 @@ client.subscribe(serviceName, hosts => {
 await client.deregisterInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
 ```
 
-### Config Service
-
-```js
-import {NacosConfigClient} from 'nacos';   // ts
-const NacosConfigClient = require('nacos').NacosConfigClient; //js
-
-const configClient = new NacosConfigClient({
-  endpoint: 'acm.aliyun.com',
-  namespace: '***************',
-  accessKey: '***************',
-  secretKey: '***************',
-  requestTimeout: 6000,
-});
-
-// pull config directly
-const content= await configClient.getConfig('test', 'DEFAULT_GROUP');
-console.log('getConfig = ',content);
-
-// listen content change and get config first
-configClient.subscribe({
-  dataId: 'test',
-  group: 'DEFAULT_GROUP',
-}, content => {
-  console.log(content);
-});
-
-// push one config
-const content= await configClient.publishSingle('test', 'DEFAULT_GROUP', '测试');
-console.log('getConfig = ',content);
-
-// remove one config
-await configClient.remove('test', 'DEFAULT_GROUP');
-```
-
 ## APIs
 
 ### Service Discovery
@@ -110,29 +76,6 @@ await configClient.remove('test', 'DEFAULT_GROUP');
 - `unSubscribe(info, [listener])` Unsubscribe the instances of the service
   - info <Object>|<String> service info, if type is string, it's the serviceName
   - listener <Function> the listener function, if not provide, will unSubscribe all listeners under this service
-  
-### Config Service
-
-- `async function getConfig(dataId, group)`
-  - {String} dataId - data id
-  - {String} group - group name
-- `async function publishSingle(dataId, group, content)`
-  - {String} dataId - data id
-  - {String} group - group name
-  - {String} content - content you want to publish
-- `async function remove(dataId, group)`
-  - {String} dataId - data id
-  - {String} group - group name
-- `function subscribe(info, listener)`
-  - {Object} info
-    - {String} dataId - data id
-    - {String} group - group name
-  - {Function} listener - callback handler
-- `function unSubscribe(info, [listener])`
-  - {Object} info
-    - {String} dataId - data id
-    - {String} group - group
-  - {Function} listener - callback handler（optional，remove all listener when it was null）
 
 ## Questions & Suggestions
 
