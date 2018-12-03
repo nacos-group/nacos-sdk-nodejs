@@ -110,7 +110,8 @@ await configClient.remove('test', 'DEFAULT_GROUP');
 - `unSubscribe(info, [listener])` Unsubscribe the instances of the service
   - info <Object>|<String> service info, if type is string, it's the serviceName
   - listener <Function> the listener function, if not provide, will unSubscribe all listeners under this service
-  
+
+
 ### Config Service
 
 - `async function getConfig(dataId, group)`
@@ -132,7 +133,7 @@ await configClient.remove('test', 'DEFAULT_GROUP');
   - {Object} info
     - {String} dataId - data id
     - {String} group - group
-  - {Function} listener - callback handler（optional，remove all listener when it was null）
+  - {Function} listener - callback handler（optional，remove all listener when it is null）
 
 ## Questions & Suggestions
 
