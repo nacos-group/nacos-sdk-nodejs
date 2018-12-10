@@ -1,6 +1,6 @@
 {
   "name": "nacos",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "nacos client main package",
   "keywords": [
     "nacos",
