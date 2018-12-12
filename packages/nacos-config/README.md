@@ -8,14 +8,20 @@
 
 ```js
 import {NacosConfigClient} from 'nacos';   // ts
-const NacosConfigClient = require('nacos').NacosConfigClient; //js
+const NacosConfigClient = require('nacos').NacosConfigClient; // js
 
+// 下面的代码是寻址模式
 const configClient = new NacosConfigClient({
   endpoint: 'acm.aliyun.com', // acm 控制台查看
   namespace: '***************', // acm 控制台查看
   accessKey: '***************', // acm 控制台查看
   secretKey: '***************', // acm 控制台查看
   requestTimeout: 6000, // 请求超时时间，默认6s
+});
+
+// 下面的代码是直连模式
+const configClient = new NacosConfigClient({
+  serverAddr: '127.0.0.1:8848', // 对端的 ip 和端口，其他参数同寻址模式
 });
 
 // 主动拉取配置
@@ -45,6 +51,10 @@ configClient.on('error', function (err) {
   // 如果不监听错误事件，所有的异常都将会打印到 stderr
 });
 ```
+
+NacosConfigClient 的 options 定义见 [ClientOptions](https://github.com/nacos-group/nacos-sdk-nodejs/blob/master/packages/nacos-config/src/interface.ts#L247)
+
+默认值见 [ClientOptions 默认值](https://github.com/nacos-group/nacos-sdk-nodejs/blob/6786534c023c9b5200960363ff6c541707f4d3bf/packages/nacos-config/src/const.ts#L34)
 
 ### API
 

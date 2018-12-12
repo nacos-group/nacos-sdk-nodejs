@@ -14,11 +14,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 import { DataClient } from './client';
+import { checkParameters } from './utils';
+import { BaseClient, ClientOptions } from './interface';
+
+export * from './interface';
 export { DataClient } from './client';
 export { ClientWorker } from './client_worker';
-import { checkParameters } from './utils';
-import { BaseClient } from './interface';
 export { ServerListManager } from './server_list_mgr';
 export { Snapshot } from './snapshot';
 
@@ -26,11 +29,13 @@ const APIClientBase = require('cluster-client').APIClientBase;
 
 export class NacosConfigClient extends APIClientBase implements BaseClient {
 
+  protected _client: BaseClient;
+
   /**
    * cluster-client wrapper client
    * set after constructor
    */
-  constructor(options = {}) {
+  constructor(options: ClientOptions = {}) {
     super(options);
   }
 
@@ -55,7 +60,7 @@ export class NacosConfigClient extends APIClientBase implements BaseClient {
    * @return {DiamondClient} self
    */
   subscribe(reg, listener) {
-    const {dataId, group} = reg;
+    const { dataId, group } = reg;
     checkParameters(dataId, group);
     this._client.subscribe(reg, listener);
     return this;
@@ -71,7 +76,7 @@ export class NacosConfigClient extends APIClientBase implements BaseClient {
    * @return {DiamondClient} self
    */
   unSubscribe(reg, listener) {
-    const {dataId, group} = reg;
+    const { dataId, group } = reg;
     checkParameters(dataId, group);
     this._client.unSubscribe(reg, listener);
     return this;

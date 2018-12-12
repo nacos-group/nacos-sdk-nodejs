@@ -56,21 +56,27 @@ await client.deregisterInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
 
 ```js
 import {NacosConfigClient} from 'nacos';   // ts
-const NacosConfigClient = require('nacos').NacosConfigClient; //js
+const NacosConfigClient = require('nacos').NacosConfigClient; // js
 
+// 下面的代码是寻址模式
 const configClient = new NacosConfigClient({
-  endpoint: 'acm.aliyun.com',
-  namespace: '***************',
-  accessKey: '***************',
-  secretKey: '***************',
-  requestTimeout: 6000,
+  endpoint: 'acm.aliyun.com', // acm 控制台查看
+  namespace: '***************', // acm 控制台查看
+  accessKey: '***************', // acm 控制台查看
+  secretKey: '***************', // acm 控制台查看
+  requestTimeout: 6000, // 请求超时时间，默认6s
 });
 
-// pull config directly
+// 下面的代码是直连模式
+const configClient = new NacosConfigClient({
+  serverAddr: '127.0.0.1:8848', // 对端的 ip 和端口，其他参数同寻址模式
+});
+
+// 主动拉取配置
 const content= await configClient.getConfig('test', 'DEFAULT_GROUP');
 console.log('getConfig = ',content);
 
-// listen content change and get config first
+// 监听数据更新
 configClient.subscribe({
   dataId: 'test',
   group: 'DEFAULT_GROUP',
@@ -78,13 +84,25 @@ configClient.subscribe({
   console.log(content);
 });
 
-// push one config
+// 发布配置接口
 const content= await configClient.publishSingle('test', 'DEFAULT_GROUP', '测试');
 console.log('getConfig = ',content);
 
-// remove one config
+// 删除配置
 await configClient.remove('test', 'DEFAULT_GROUP');
+
+### Error Events 异常处理
+
+```js
+configClient.on('error', function (err) {
+  // 可以在这里统一进行日志的记录
+  // 如果不监听错误事件，所有的异常都将会打印到 stderr
+});
 ```
+
+NacosConfigClient 的 options 定义见 [ClientOptions](https://github.com/nacos-group/nacos-sdk-nodejs/blob/master/packages/nacos-config/src/interface.ts#L247)
+
+默认值见 [ClientOptions 默认值](https://github.com/nacos-group/nacos-sdk-nodejs/blob/master/packages/nacos-config/src/const.ts#L34)
 
 ## APIs
 
