@@ -245,19 +245,23 @@ export interface SnapShotData {
 }
 
 export interface ClientOptions {
-  endpoint?: string;
-  serverPort?: number;
-  namespace?: string;
-  accessKey?: string;
-  secretKey?: string;
-  httpclient?: any;
-  appName?: string;
-  ssl?: boolean;
-  refreshInterval?: number;
-  contextPath?: string;
-  clusterName?: string;
-  requestTimeout?: number;
-  defaultEncoding?: string;
+  endpoint?: string;          // 寻址模式下的对端 host
+  serverPort?: number;        // 对端端口
+  namespace?: string;         // 阿里云的 namespace
+  accessKey?: string;         // 阿里云的 accessKey
+  secretKey?: string;         // 阿里云的 secretKey
+  httpclient?: any;           // http 请求客户端，默认为 urllib
+  appName?: string;           // 应用名，可选
+  ssl?: boolean;              // 是否为 https 请求
+  refreshInterval?: number;   // 重新拉去地址列表的间隔时间
+  contextPath?: string;       // 请求的 contextPath
+  clusterName?: string;       // 请求的 path
+  requestTimeout?: number;    // 请求超时时间
+  defaultEncoding?: string;   // 请求编码
+  serverAddr?: string;        // 用于直连，包含端口
+  unit?: string;              // 内部单元化用
+  nameServerAddr?: string;    // 老的兼容参数，逐步废弃，同 endpoint
+  cacheDir?: string;          // 缓存文件的路径
 }
 
 export enum ClientOptionKeys {
@@ -271,16 +275,16 @@ export enum ClientOptionKeys {
   SSL = 'ssl',
   SNAPSHOT = 'snapshot',
   CACHE_DIR = 'cacheDir',
-  NAMESERVERADDR = 'nameServerAddr',   // 保留原有的配置功能
-  SERVERADDR = 'serverAddr',  // 用于直连，包含端口
+  NAMESERVERADDR = 'nameServerAddr',
+  SERVERADDR = 'serverAddr',
   UNIT = 'unit',
-  REFRESH_INTERVAL = 'refreshInterval', // 重新拉去地址列表的间隔时间
+  REFRESH_INTERVAL = 'refreshInterval',
   CONTEXTPATH = 'contextPath',
   CLUSTER_NAME = 'clusterName',
   REQUEST_TIMEOUT = 'requestTimeout',
   HTTP_AGENT = 'httpAgent',
   SERVER_MGR = 'serverMgr',
-  DEFAULT_ENCODING = 'utf8', // 请求的默认编码
+  DEFAULT_ENCODING = 'defaultEncoding',
 }
 
 export interface IConfiguration {
