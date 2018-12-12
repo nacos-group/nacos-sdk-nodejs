@@ -56,8 +56,9 @@ await client.deregisterInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
 
 ```js
 import {NacosConfigClient} from 'nacos';   // ts
-const NacosConfigClient = require('nacos').NacosConfigClient; //js
+const NacosConfigClient = require('nacos').NacosConfigClient; // js
 
+// for find address mode
 const configClient = new NacosConfigClient({
   endpoint: 'acm.aliyun.com',
   namespace: '***************',
@@ -66,11 +67,16 @@ const configClient = new NacosConfigClient({
   requestTimeout: 6000,
 });
 
-// pull config directly
+// for direct mode
+const configClient = new NacosConfigClient({
+  serverAddr: '127.0.0.1:8848',
+});
+
+// get config once
 const content= await configClient.getConfig('test', 'DEFAULT_GROUP');
 console.log('getConfig = ',content);
 
-// listen content change and get config first
+// listen data changed
 configClient.subscribe({
   dataId: 'test',
   group: 'DEFAULT_GROUP',
@@ -78,13 +84,17 @@ configClient.subscribe({
   console.log(content);
 });
 
-// push one config
+// publish config
 const content= await configClient.publishSingle('test', 'DEFAULT_GROUP', '测试');
 console.log('getConfig = ',content);
 
-// remove one config
+// remove config
 await configClient.remove('test', 'DEFAULT_GROUP');
 ```
+
+NacosConfigClient options: [ClientOptions](https://github.com/nacos-group/nacos-sdk-nodejs/blob/master/packages/nacos-config/src/interface.ts#L247)
+
+default value: [ClientOptions default value](https://github.com/nacos-group/nacos-sdk-nodejs/blob/master/packages/nacos-config/src/const.ts#L34)
 
 ## APIs
 
