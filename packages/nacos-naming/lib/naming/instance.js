@@ -17,6 +17,8 @@
 
 'use strict';
 
+const Constants = require('../const');
+
 class Instance {
   constructor(data = {}) {
     this.instanceId = data.instanceId; // Unique ID of this instance
@@ -31,7 +33,7 @@ class Instance {
       this.healthy = true;
     }
     this.enabled = typeof data.enabled === 'boolean' ? data.enabled : true;
-    this.clusterName = data.clusterName; // Cluster information of instance
+    this.clusterName = data.clusterName || Constants.NAMING_DEFAULT_CLUSTER_NAME; // Cluster information of instance
     this.serviceName = data.serviceName;
     this.metadata = data.metadata || {};
   }

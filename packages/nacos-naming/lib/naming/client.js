@@ -57,13 +57,17 @@ class NacosNamingClient extends Base {
   }
 
   async registerInstance(serviceName, ip, port, clusterName = Constants.NAMING_DEFAULT_CLUSTER_NAME) {
-    const instance = new Instance({
-      ip,
-      port,
-      weight: 1,
-      clusterName,
-    });
-
+    let instance = null;
+    if (typeof ip === 'object') {
+      instance = new Instance(ip);
+    } else {
+      instance = new Instance({
+        ip,
+        port,
+        weight: 1,
+        clusterName,
+      });
+    }
     const beatInfo = {
       port,
       ip,

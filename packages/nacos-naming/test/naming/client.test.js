@@ -75,6 +75,25 @@ describe('test/naming/client.test.js', () => {
     client.unSubscribe(serviceName);
   });
 
+  it('should support registerInstance(serviceName, instance)', async function() {
+    const serviceName = 'nodejs.test.xxx.' + process.versions.node;
+    await client.registerInstance(serviceName, {
+      ip: '1.1.1.1',
+      port: 8888,
+      metadata: {
+        xxx: 'yyy',
+        foo: 'bar',
+      },
+    });
+    await sleep(2000);
+    const hosts = await client.getAllInstances(serviceName);
+    console.log(hosts);
+    const host = hosts.find(host => {
+      return host.ip === '1.1.1.1' && host.port === 8888;
+    });
+    assert.deepEqual(host.metadata, { foo: 'bar', xxx: 'yyy' });
+  });
+
   it('should getAllInstances ok', async function() {
     await client.registerInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
     await client.registerInstance(serviceName, '2.2.2.2', 8080, 'OTHERS');
