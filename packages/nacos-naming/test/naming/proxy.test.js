@@ -19,6 +19,7 @@
 
 const mm = require('mm');
 const assert = require('assert');
+const sleep = require('mz-modules/sleep');
 const NameProxy = require('../../lib/naming/proxy');
 
 const logger = console;
@@ -41,6 +42,7 @@ describe('test/naming/proxy.test.js', () => {
       metadata: {},
     });
     assert(result === 'ok');
+    await sleep(1000);
 
     let jsonStr = await proxy.reqAPI('/nacos/v1/ns/instances', {
       serviceName,

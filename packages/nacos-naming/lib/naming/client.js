@@ -69,8 +69,8 @@ class NacosNamingClient extends Base {
       });
     }
     const beatInfo = {
-      port,
-      ip,
+      port: instance.port,
+      ip: instance.ip,
       weight: instance.weight,
       metadata: instance.metadata,
       dom: serviceName,
