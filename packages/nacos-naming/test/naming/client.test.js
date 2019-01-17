@@ -86,12 +86,21 @@ describe('test/naming/client.test.js', () => {
       },
     });
     await sleep(2000);
-    const hosts = await client.getAllInstances(serviceName);
+    let hosts = await client.getAllInstances(serviceName);
     console.log(hosts);
     const host = hosts.find(host => {
       return host.ip === '1.1.1.1' && host.port === 8888;
     });
     assert.deepEqual(host.metadata, { foo: 'bar', xxx: 'yyy' });
+
+    hosts = null;
+    client.subscribe(serviceName, val => {
+      hosts = val;
+    });
+
+    await sleep(10000);
+    assert(hosts && hosts.length === 1);
+    assert(hosts[0].ip === '1.1.1.1');
   });
 
   it('should getAllInstances ok', async function() {
@@ -105,7 +114,7 @@ describe('test/naming/client.test.js', () => {
     assert(hosts.find(host => host.ip === '1.1.1.1' && host.port === 8080));
     assert(hosts.find(host => host.ip === '2.2.2.2' && host.port === 8080));
 
-    hosts = await client.getAllInstances(serviceName, [ 'NODEJS' ]);
+    hosts = await client.getAllInstances(serviceName, ['NODEJS']);
     assert(hosts.length === 1);
     assert(hosts.find(host => host.ip === '1.1.1.1' && host.port === 8080));
 
