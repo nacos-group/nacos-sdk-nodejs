@@ -44,7 +44,9 @@ export class DataClient extends Base implements BaseClient {
   protected httpAgent;
 
   constructor(options: ClientOptions) {
-    assert(options.endpoint, '[Client] options.endpoint is required');
+    if(!options.endpoint && !options.serverAddr) {
+      assert(options.endpoint, '[Client] options.endpoint or options.serverAddr is required');
+    }
 
     options = Object.assign({}, DEFAULT_OPTIONS, options);
     super(options);
