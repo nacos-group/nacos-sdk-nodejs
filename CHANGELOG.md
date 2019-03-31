@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.1.2](https://github.com/nacos-group/nacos-sdk-nodejs/compare/v1.1.1...v1.1.2) (2019-03-31)
+
+
+### Bug Fixes
+
+* fix gbk text ([93c3559](https://github.com/nacos-group/nacos-sdk-nodejs/commit/93c3559))
+* fix options in direct mode ([2942e19](https://github.com/nacos-group/nacos-sdk-nodejs/commit/2942e19))
+
+
+
+
+
 ## [1.1.1](https://github.com/nacos-group/nacos-sdk-nodejs/compare/v1.1.0...v1.1.1) (2019-01-17)
 
 
