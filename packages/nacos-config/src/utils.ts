@@ -74,3 +74,8 @@ export function checkParameters(dataIds, group, datumId?) {
     assert(exports.isValid(datumId), `[datumId] only allow digital, letter and symbols in [ "_", "-", ".", ":" ], but got ${datumId}`);
   }
 }
+
+
+export function transformGBKToUTF8(text) {
+  return iconv.decode(iconv.encode(text, 'gbk'), 'utf8');
+}
