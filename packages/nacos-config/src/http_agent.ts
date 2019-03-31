@@ -18,7 +18,7 @@ import { HTTP_CONFLICT, HTTP_NOT_FOUND, HTTP_OK, VERSION } from './const';
 import { ClientOptionKeys, IConfiguration, IServerListManager } from './interface';
 import * as urllib from 'urllib';
 import * as crypto from 'crypto';
-import { encodingParams } from './utils';
+import { encodingParams, transformGBKToUTF8 } from './utils';
 
 export class HttpAgent {
 
@@ -153,7 +153,7 @@ export class HttpAgent {
         this.debug('%s %s, got %s, body: %j', method, url, res.status, res.data);
         switch (res.status) {
           case HTTP_OK:
-            return res.data;
+            return this.decodeResData(res, method);
           case HTTP_NOT_FOUND:
             return null;
           case HTTP_CONFLICT:
@@ -197,6 +197,19 @@ export class HttpAgent {
       }
     }
     return `${url}/${this.contextPath}`;
+  }
+
+  decodeResData(res, method = 'GET') {
+    if (method === 'GET' && /charset=GBK/.test(res.headers[ 'content-type' ]) && this.defaultEncoding === 'utf8') {
+      try {
+        return transformGBKToUTF8(res.data);
+      } catch (err) {
+        console.error(`transform gbk data to utf8 error, msg=${err.messager}`);
+        return res.data;
+      }
+    } else {
+      return res.data;
+    }
   }
 
 }

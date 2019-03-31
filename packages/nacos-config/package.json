@@ -26,7 +26,7 @@
     "@types/mocha": "^5.2.5",
     "@types/node": "^10.9.4",
     "contributors": "^0.5.1",
-    "midway-bin": "^0.3.2",
+    "midway-bin": "1",
     "mm": "^2.4.1",
     "pedding": "^1.1.0",
     "tslint": "^5.11.0",
