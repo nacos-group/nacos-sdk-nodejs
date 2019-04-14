@@ -26,102 +26,104 @@ const HostReactor = require('./host_reactor');
 const Constants = require('../const');
 
 const defaultOptions = {
-  namespace: 'default',
+    namespace: 'default',
 };
 
 class NacosNamingClient extends Base {
-  constructor(options = {}) {
-    assert(options.logger, '');
-    super(Object.assign({}, defaultOptions, options, { initMethod: '_init' }));
+    constructor(options = {}) {
+        assert(options.logger, '');
+        super(Object.assign({}, defaultOptions, options, { initMethod: '_init' }));
 
-    this._serverProxy = new NamingProxy({
-      logger: this.logger,
-      serverList: this.options.serverList,
-    });
-    this._beatReactor = new BeatReactor({
-      serverProxy: this._serverProxy,
-      logger: this.logger,
-    });
-    this._hostReactor = new HostReactor({
-      serverProxy: this._serverProxy,
-      logger: this.logger,
-    });
-  }
-
-  async _init() {
-    await this._hostReactor.ready();
-  }
-
-  get logger() {
-    return this.options.logger;
-  }
-
-  async registerInstance(serviceName, ip, port, clusterName = Constants.NAMING_DEFAULT_CLUSTER_NAME) {
-    let instance = null;
-    if (typeof ip === 'object') {
-      instance = new Instance(ip);
-    } else {
-      instance = new Instance({
-        ip,
-        port,
-        weight: 1,
-        clusterName,
-      });
+        this._serverProxy = new NamingProxy({
+            logger: this.logger,
+            namespace: this.options.namespace,
+            serverList: this.options.serverList,
+        });
+        this._beatReactor = new BeatReactor({
+            serverProxy: this._serverProxy,
+            logger: this.logger,
+        });
+        this._hostReactor = new HostReactor({
+            serverProxy: this._serverProxy,
+            logger: this.logger,
+        });
     }
-    const beatInfo = {
-      port: instance.port,
-      ip: instance.ip,
-      weight: instance.weight,
-      metadata: instance.metadata,
-      dom: serviceName,
-    };
-    this._beatReactor.addBeatInfo(serviceName, beatInfo);
-    await this._serverProxy.registerService(serviceName, instance);
-  }
 
-  async deregisterInstance(serviceName, ip, port, clusterName = Constants.NAMING_DEFAULT_CLUSTER_NAME) {
-    this._beatReactor.removeBeatInfo(serviceName, ip, port);
-    await this._serverProxy.deregisterService(serviceName, ip, port, clusterName);
-  }
-
-  async getAllInstances(serviceName, clusters = []) {
-    const serviceInfo = await this._hostReactor.getServiceInfo({
-      serviceName,
-      clusters,
-      allIPs: false,
-      env: '',
-    });
-    if (!serviceInfo) return [];
-    return serviceInfo.hosts;
-  }
-
-  async getServerStatus() {
-    const isHealthy = await this._serverProxy.serverHealthy();
-    return isHealthy ? 'UP' : 'DOWN';
-  }
-
-  subscribe(info, listener) {
-    if (typeof info === 'string') {
-      info = {
-        serviceName: info,
-      };
+    async _init() {
+        await this._hostReactor.ready();
     }
-    this._hostReactor.subscribe(info, listener);
-  }
 
-  unSubscribe(info, listener) {
-    if (typeof info === 'string') {
-      info = {
-        serviceName: info,
-      };
+    get logger() {
+        return this.options.logger;
     }
-    this._hostReactor.unSubscribe(info, listener);
-  }
 
-  close() {
-    this._beatReactor.close();
-    this._hostReactor.close();
-  }
+    async registerInstance(serviceName, ip, port, clusterName = Constants.NAMING_DEFAULT_CLUSTER_NAME) {
+        let instance = null;
+        if (typeof ip === 'object') {
+            instance = new Instance(ip);
+        } else {
+            instance = new Instance({
+                ip,
+                port,
+                weight: 1,
+                clusterName,
+            });
+        }
+        const beatInfo = {
+            port: instance.port,
+            ip: instance.ip,
+            weight: instance.weight,
+            metadata: instance.metadata,
+            dom: serviceName,
+            namespace: this.options.namespace
+        };
+        this._beatReactor.addBeatInfo(serviceName, beatInfo);
+        await this._serverProxy.registerService(serviceName, instance);
+    }
+
+    async deregisterInstance(serviceName, ip, port, clusterName = Constants.NAMING_DEFAULT_CLUSTER_NAME) {
+        this._beatReactor.removeBeatInfo(serviceName, ip, port);
+        await this._serverProxy.deregisterService(serviceName, ip, port, clusterName);
+    }
+
+    async getAllInstances(serviceName, clusters = []) {
+        const serviceInfo = await this._hostReactor.getServiceInfo({
+            serviceName,
+            clusters,
+            allIPs: false,
+            env: '',
+        });
+        if (!serviceInfo) return [];
+        return serviceInfo.hosts;
+    }
+
+    async getServerStatus() {
+        const isHealthy = await this._serverProxy.serverHealthy();
+        return isHealthy ? 'UP' : 'DOWN';
+    }
+
+    subscribe(info, listener) {
+        if (typeof info === 'string') {
+            info = {
+                serviceName: info,
+            };
+        }
+        this._hostReactor.subscribe(info, listener);
+    }
+
+    unSubscribe(info, listener) {
+        if (typeof info === 'string') {
+            info = {
+                serviceName: info,
+            };
+        }
+        this._hostReactor.unSubscribe(info, listener);
+    }
+
+    close() {
+        this._beatReactor.close();
+        this._hostReactor.close();
+    }
 }
 
 module.exports = NacosNamingClient;

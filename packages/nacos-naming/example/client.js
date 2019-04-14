@@ -22,35 +22,36 @@ const sleep = require('mz-modules/sleep');
 const logger = console;
 
 async function test() {
-  const client = new NacosNamingClient({
-    logger,
-    serverList: '127.0.0.1:8848',
-  });
-  await client.ready();
+    const client = new NacosNamingClient({
+        logger,
+        serverList: '127.0.0.1:8848',
+        //namespace: '337ab180-1bfd-409b-9783-974f6c37f4' //namespaceId
+    });
+    await client.ready();
 
-  const serviceName = 'nodejs.test.nodejs.1';
+    const serviceName = 'nodejs.test.nodejs.1';
 
-  // console.log();
-  // console.log('before', await client.getAllInstances(serviceName, ['NODEJS']));
-  // console.log();
+    // console.log();
+    // console.log('before', await client.getAllInstances(serviceName, ['NODEJS']));
+    // console.log();
 
-  client.subscribe(serviceName, hosts => {
-    console.log(hosts);
-  });
+    client.subscribe(serviceName, hosts => {
+        console.log(hosts);
+    });
 
-  await client.registerInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
-  await client.registerInstance(serviceName, '2.2.2.2', 8080, 'NODEJS');
+    await client.registerInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
+    await client.registerInstance(serviceName, '2.2.2.2', 8080, 'NODEJS');
 
-  // const hosts = await client.getAllInstances(serviceName);
-  // console.log();
-  // console.log(hosts);
-  // console.log();
+    // const hosts = await client.getAllInstances(serviceName);
+    // console.log();
+    // console.log(hosts);
+    // console.log();
 
-  await sleep(5000);
+    await sleep(5000);
 
-  await client.deregisterInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
+    await client.deregisterInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
 }
 
 test().catch(err => {
-  console.log(err);
+    console.log(err);
 });
