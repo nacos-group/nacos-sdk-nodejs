@@ -38,8 +38,14 @@ async function test() {
     console.log(hosts);
   });
 
-  await client.registerInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
-  await client.registerInstance(serviceName, '2.2.2.2', 8080, 'NODEJS');
+  await client.registerInstance(serviceName, {
+    ip: '1.1.1.1',
+    port: 8080,
+  });
+  await client.registerInstance(serviceName, {
+    ip: '2.2.2.2',
+    port: 8080,
+  });
 
   // const hosts = await client.getAllInstances(serviceName);
   // console.log();
@@ -48,7 +54,10 @@ async function test() {
 
   await sleep(5000);
 
-  await client.deregisterInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
+  await client.deregisterInstance(serviceName, {
+    ip: '1.1.1.1',
+    port: 8080,
+  });
 }
 
 test().catch(err => {

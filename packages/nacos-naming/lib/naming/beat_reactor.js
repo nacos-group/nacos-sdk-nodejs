@@ -24,7 +24,6 @@ const sleep = require('mz-modules/sleep');
 
 class BeatReactor extends Base {
   constructor(options = {}) {
-    assert(options.logger, '[BeatReactor] options.logger is required');
     assert(options.serverProxy, '[BeatReactor] options.serverProxy is required');
     super(options);
 
@@ -34,10 +33,6 @@ class BeatReactor extends Base {
     this._clientBeatInterval = 10 * 1000;
     this._startBeat();
     this.ready(true);
-  }
-
-  get logger() {
-    return this.options.logger;
   }
 
   get serverProxy() {
@@ -57,20 +52,11 @@ class BeatReactor extends Base {
   }
 
   async _beat(beatInfo) {
-    const params = {
-      beat: JSON.stringify(beatInfo),
-      dom: beatInfo.dom,
-    };
-    try {
-      const result = await this.serverProxy.reqAPI(Constants.NACOS_URL_BASE + '/api/clientBeat', params);
-      const jsonObject = JSON.parse(result);
-      if (jsonObject) {
-        this._clientBeatInterval = jsonObject.clientBeatInterval;
-      }
-    } catch (err) {
-      err.message = '[CLIENT-BEAT] failed to send beat: ' + JSON.stringify(beatInfo) + ', caused by ' + err.message;
-      this.emit('error', err);
-    }
+    if (beatInfo.scheduled) return;
+
+    beatInfo.scheduled = true;
+    this._clientBeatInterval = await this.serverProxy.sendBeat(beatInfo);
+    beatInfo.scheduled = false;
   }
 
   async _startBeat() {
@@ -78,15 +64,14 @@ class BeatReactor extends Base {
 
     this._isRunning = true;
     while (!this._isClosed) {
-      for (const beatInfo of this._dom2Beat.values()) {
-        this._beat(beatInfo);
-      }
+      await Promise.all(Array.from(this._dom2Beat.values())
+        .map(beatInfo => this._beat(beatInfo)));
       await sleep(this._clientBeatInterval);
     }
     this._isRunning = false;
   }
 
-  close() {
+  async _close() {
     this._isClosed = true;
     this._isRunning = false;
     this._dom2Beat.clear();

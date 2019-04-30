@@ -19,18 +19,18 @@
 
 const EMPTY = '';
 const SPLITER = '@@';
-const ALL_IPS = '000--00-ALL_IPS--00--000';
+// const ALL_IPS = '000--00-ALL_IPS--00--000';
 
 class ServiceInfo {
   constructor(data) {
     this.name = data.name || data.dom;
+    this.groupName = data.groupName;
     this.clusters = data.clusters;
     this.isAllIPs = data.allIPs || false;
     this.cacheMillis = data.cacheMillis || 1000;
     this.hosts = data.hosts;
     this.lastRefTime = data.lastRefTime || 0;
     this.checksum = data.checksum || '';
-    this.env = data.env || '';
     this.jsonFromServer = EMPTY;
   }
 
@@ -43,77 +43,38 @@ class ServiceInfo {
   }
 
   getKey() {
-    const name = this.name;
-    const clusters = this.clusters;
-    const unit = this.env;
-    const isAllIPs = this.isAllIPs;
-    return ServiceInfo.getKey(name, clusters, unit, isAllIPs);
+    return ServiceInfo.getKey(this.name, this.clusters);
   }
 
   toString() {
     return this.getKey();
   }
 
-  static getKey(name, clusters, unit, isAllIPs) {
-    if (!unit) {
-      unit = EMPTY;
-    }
-    if (clusters && unit) {
-      return isAllIPs ? name + SPLITER + clusters + SPLITER + unit + SPLITER + ALL_IPS :
-        name + SPLITER + clusters + SPLITER + unit;
-    }
+  static getKey(name, clusters) {
     if (clusters) {
-      return isAllIPs ? name + SPLITER + clusters + SPLITER + ALL_IPS : name + SPLITER + clusters;
+      return name + SPLITER + clusters;
     }
-    if (unit) {
-      return isAllIPs ? name + SPLITER + EMPTY + SPLITER + unit + SPLITER + ALL_IPS :
-        name + SPLITER + EMPTY + SPLITER + unit;
-    }
-    return isAllIPs ? name + SPLITER + ALL_IPS : name;
+    return name;
   }
 
-  static parse(key) {
-    const maxKeySectionCount = 4;
-    const allIpFlagIndex = 3;
-    const envIndex = 2;
-    const clusterIndex = 1;
-    const serviceNameIndex = 0;
-
+  static fromKey(key) {
     let name;
     let clusters;
-    let env;
-    let allIPs = false;
+    let groupName;
 
-    const keys = key.split(SPLITER);
-    if (keys.length >= maxKeySectionCount) {
-      name = keys[serviceNameIndex];
-      clusters = keys[clusterIndex];
-      env = keys[envIndex];
-      if (keys[allIpFlagIndex] === ALL_IPS) {
-        allIPs = true;
-      }
-    } else if (keys.length >= allIpFlagIndex) {
-      name = keys[serviceNameIndex];
-      clusters = keys[clusterIndex];
-      if (keys[envIndex] === ALL_IPS) {
-        allIPs = true;
-      } else {
-        env = keys[envIndex];
-      }
-    } else if (keys.length >= envIndex) {
-      name = keys[serviceNameIndex];
-      if (keys[clusterIndex] === ALL_IPS) {
-        allIPs = true;
-      } else {
-        clusters = keys[clusterIndex];
-      }
+    const segs = key.split(SPLITER);
+    if (segs.length === 2) {
+      groupName = segs[0];
+      name = segs[1];
+    } else if (segs.length === 3) {
+      groupName = segs[0];
+      name = segs[1];
+      clusters = segs[2];
     }
-
     return new ServiceInfo({
       name,
       clusters,
-      env,
-      allIPs,
+      groupName,
     });
   }
 }

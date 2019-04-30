@@ -28,7 +28,7 @@ describe('test/naming/instance.test.js', () => {
       valid: true,
       enabled: false,
     });
-    assert(instance1.toString() === '{"ip":"1.1.1.1","port":8888,"weight":1,"healthy":true,"enabled":false,"clusterName":"DEFAULT","metadata":{}}');
+    assert(instance1.toString() === '{"ip":"1.1.1.1","port":8888,"weight":1,"healthy":true,"enabled":false,"ephemeral":true,"clusterName":"DEFAULT","metadata":{}}');
     assert(instance1.toInetAddr() === '1.1.1.1:8888');
 
     const instance2 = new Instance({
@@ -37,7 +37,7 @@ describe('test/naming/instance.test.js', () => {
       healthy: true,
       enabled: false,
     });
-    assert(instance2.toString() === '{"ip":"1.1.1.1","port":8888,"weight":1,"healthy":true,"enabled":false,"clusterName":"DEFAULT","metadata":{}}');
+    assert(instance2.toString() === '{"ip":"1.1.1.1","port":8888,"weight":1,"healthy":true,"enabled":false,"ephemeral":true,"clusterName":"DEFAULT","metadata":{}}');
     assert(instance2.toInetAddr() === '1.1.1.1:8888');
 
     assert(instance1.equal(instance2));
@@ -46,7 +46,7 @@ describe('test/naming/instance.test.js', () => {
       ip: '1.1.1.1',
       port: 8888,
     });
-    assert(instance3.toString() === '{"ip":"1.1.1.1","port":8888,"weight":1,"healthy":true,"enabled":true,"clusterName":"DEFAULT","metadata":{}}');
+    assert(instance3.toString() === '{"ip":"1.1.1.1","port":8888,"weight":1,"healthy":true,"enabled":true,"ephemeral":true,"clusterName":"DEFAULT","metadata":{}}');
     assert(instance3.toInetAddr() === '1.1.1.1:8888');
 
     assert(!instance1.equal(instance3));

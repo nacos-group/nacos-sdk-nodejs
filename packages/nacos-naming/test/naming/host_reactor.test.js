@@ -17,6 +17,7 @@
 
 'use strict';
 
+const mm = require('mm');
 const assert = require('assert');
 const NameProxy = require('../../lib/naming/proxy');
 const Instance = require('../../lib/naming/instance');
@@ -24,13 +25,24 @@ const HostReactor = require('../../lib/naming/host_reactor');
 
 const logger = console;
 const serviceName = 'nodejs.test.' + process.versions.node;
+const groupName = 'DEFAULT_GROUP';
+const serviceNameWithGroup = groupName + '@@' + serviceName;
 
 describe('test/naming/host_reactor.test.js', () => {
-  it('should ok', async function() {
-    const serverProxy = new NameProxy({
+  let serverProxy;
+  before(async () => {
+    serverProxy = new NameProxy({
       logger,
       serverList: '127.0.0.1:8848',
     });
+    await serverProxy.ready();
+  });
+  after(async () => {
+    await serverProxy.close();
+  });
+  afterEach(mm.restore);
+
+  it('should ok', async function() {
     const hostReactor = new HostReactor({
       logger,
       serverProxy,
@@ -38,7 +50,8 @@ describe('test/naming/host_reactor.test.js', () => {
     await hostReactor.ready();
 
     hostReactor.subscribe({
-      serviceName,
+      serviceName: serviceNameWithGroup,
+      clusters: 'NODEJS',
     }, hosts => {
       hostReactor.emit('update', hosts);
     });
@@ -52,70 +65,79 @@ describe('test/naming/host_reactor.test.js', () => {
       valid: true,
       enabled: true,
     });
-    serverProxy.registerService(serviceName, instance);
+    serverProxy.registerService(serviceNameWithGroup, groupName, instance);
 
     let hosts = [];
 
     while (hosts.length !== 1) {
       hosts = await hostReactor.await('update');
     }
-    assert(hosts.find(host => host.ip === '1.1.1.1' && host.port === 8080));
+    assert(hosts.some(host => host.ip === '1.1.1.1' && host.port === 8080));
 
+    const key = serviceNameWithGroup + '@@NODEJS';
     console.log(hostReactor.getServiceInfoMap);
-    assert(hostReactor.getServiceInfoMap && hostReactor.getServiceInfoMap[serviceName]);
+    assert(hostReactor.getServiceInfoMap && hostReactor.getServiceInfoMap[key]);
 
     hostReactor.processServiceJSON(JSON.stringify({
-      dom: serviceName,
-      clusters: '',
-      isAllIPs: false,
+      metadata: {},
+      dom: serviceNameWithGroup,
       cacheMillis: 10000,
+      useSpecifiedURL: false,
       hosts: null,
-      lastRefTime: 1542806333263,
-      checksum: 'c1762ddd16f512ae13bcf2c5a07e2e221542806333263',
+      name: serviceNameWithGroup,
+      checksum: 'cc4e0ff13773c6d443d9ba0532b32810',
+      lastRefTime: 1556603044852,
       env: '',
+      clusters: 'NODEJS',
     }));
-    assert(hostReactor.getServiceInfoMap[serviceName].hosts.length === 1);
+    assert(hostReactor.getServiceInfoMap[key].hosts.length === 1);
 
     hostReactor.processServiceJSON(JSON.stringify({
-      dom: serviceName,
-      clusters: '',
-      isAllIPs: false,
+      metadata: {},
+      dom: serviceNameWithGroup,
       cacheMillis: 10000,
-      hosts: hostReactor.getServiceInfoMap[serviceName].hosts,
-      lastRefTime: 1542806333262,
-      checksum: 'c1762ddd16f512ae13bcf2c5a07e2e221542806333263',
+      useSpecifiedURL: false,
+      hosts: hostReactor.getServiceInfoMap[key].hosts,
+      name: serviceNameWithGroup,
+      checksum: 'cc4e0ff13773c6d443d9ba0532b32811',
+      lastRefTime: 1556603044852,
       env: '',
+      clusters: 'NODEJS',
     }));
-    assert(hostReactor.getServiceInfoMap[serviceName].hosts.length === 1);
+    assert(hostReactor.getServiceInfoMap[key].hosts.length === 1);
 
     hostReactor.processServiceJSON(JSON.stringify({
-      dom: serviceName,
-      clusters: '',
-      isAllIPs: false,
+      metadata: {},
+      dom: serviceNameWithGroup,
       cacheMillis: 10000,
-      hosts: hostReactor.getServiceInfoMap[serviceName].hosts.map(host => {
+      useSpecifiedURL: false,
+      hosts: hostReactor.getServiceInfoMap[key].hosts.map(host => {
         return Object.assign({}, host, { enabled: false });
       }),
-      lastRefTime: 1542806333262,
-      checksum: 'c1762ddd16f512ae13bcf2c5a07e2e221542806333263',
+      name: serviceNameWithGroup,
+      checksum: 'cc4e0ff13773c6d443d9ba0532b32812',
+      lastRefTime: 1556603044852,
       env: '',
+      clusters: 'NODEJS',
     }));
-    assert(hostReactor.getServiceInfoMap[serviceName].hosts.length === 1);
-    assert(!hostReactor.getServiceInfoMap[serviceName].hosts[0].enabled);
+    assert(hostReactor.getServiceInfoMap[key].hosts.length === 1);
+    assert(!hostReactor.getServiceInfoMap[key].hosts[0].enabled);
 
     hostReactor.processServiceJSON(JSON.stringify({
-      dom: serviceName + '_1',
-      clusters: '',
-      isAllIPs: false,
+      metadata: {},
+      dom: 'mock_dom',
       cacheMillis: 10000,
-      hosts: hostReactor.getServiceInfoMap[serviceName].hosts,
-      lastRefTime: 1542806333263,
-      checksum: 'c1762ddd16f512ae13bcf2c5a07e2e221542806333263',
+      useSpecifiedURL: false,
+      hosts: hostReactor.getServiceInfoMap[key].hosts,
+      name: 'mock_dom',
+      checksum: 'cc4e0ff13773c6d443d9ba0532b32813',
+      lastRefTime: 1556603044852,
       env: '',
+      clusters: 'NODEJS',
     }));
-    assert(hostReactor.getServiceInfoMap[serviceName + '_1']);
+    assert(hostReactor.getServiceInfoMap['mock_dom@@NODEJS']);
 
-    serverProxy.deregisterService(serviceName, instance.ip, instance.port, instance.clusterName);
+    serverProxy.deregisterService(serviceName, instance);
 
     while (hosts.length !== 0) {
       hosts = await hostReactor.await('update');
@@ -125,20 +147,18 @@ describe('test/naming/host_reactor.test.js', () => {
       assert(hosts.length === 0);
     };
     hostReactor.subscribe({
-      serviceName,
+      serviceName: serviceNameWithGroup,
+      clusters: 'NODEJS',
     }, listener);
     hostReactor.unSubscribe({
-      serviceName,
+      serviceName: serviceNameWithGroup,
+      clusters: 'NODEJS',
     }, listener);
 
-    hostReactor.close();
+    await hostReactor.close();
   });
 
-  it('should updateService4AllIPNow ok', async function() {
-    const serverProxy = new NameProxy({
-      logger,
-      serverList: '127.0.0.1:8848',
-    });
+  it('should updateServiceNow ok', async () => {
     const hostReactor = new HostReactor({
       logger,
       serverProxy,
@@ -146,17 +166,36 @@ describe('test/naming/host_reactor.test.js', () => {
     await hostReactor.ready();
 
     const arr = await Promise.all([
-      hostReactor.getServiceInfo({
-        serviceName,
-        allIPs: true,
-      }),
-      hostReactor.getServiceInfo({
-        serviceName,
-        allIPs: true,
-      }),
+      hostReactor.getServiceInfo(serviceNameWithGroup, 'NODEJS'),
+      hostReactor.getServiceInfo(serviceNameWithGroup, 'NODEJS'),
     ]);
-    console.log(arr);
+    assert(arr && arr.length === 2);
+    assert(arr.every(item => !!item));
 
-    hostReactor.close();
+    await hostReactor.close();
+  });
+
+  it('should emit error if serverProxy.queryList failed', async () => {
+    mm.error(serverProxy, 'queryList', 'mock error');
+
+    const hostReactor = new HostReactor({
+      logger,
+      serverProxy,
+    });
+    await hostReactor.ready();
+
+    hostReactor.updateServiceNow(serviceNameWithGroup, 'NODEJS');
+
+    await assert.rejects(async () => {
+      await hostReactor.await('error');
+    }, /failed to update serviceName/);
+
+    hostReactor.refreshOnly(serviceNameWithGroup, 'NODEJS');
+
+    await assert.rejects(async () => {
+      await hostReactor.await('error');
+    }, /failed to update serviceName/);
+
+    await hostReactor.close();
   });
 });

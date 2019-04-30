@@ -33,6 +33,7 @@ class Instance {
       this.healthy = true;
     }
     this.enabled = typeof data.enabled === 'boolean' ? data.enabled : true;
+    this.ephemeral = typeof data.ephemeral === 'boolean' ? data.ephemeral : true;
     this.clusterName = data.clusterName || Constants.NAMING_DEFAULT_CLUSTER_NAME; // Cluster information of instance
     this.serviceName = data.serviceName;
     this.metadata = data.metadata || {};

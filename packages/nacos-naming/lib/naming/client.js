@@ -17,6 +17,7 @@
 
 'use strict';
 
+const utils = require('../util');
 const Base = require('sdk-base');
 const assert = require('assert');
 const Instance = require('./instance');
@@ -34,10 +35,7 @@ class NacosNamingClient extends Base {
     assert(options.logger, '');
     super(Object.assign({}, defaultOptions, options, { initMethod: '_init' }));
 
-    this._serverProxy = new NamingProxy({
-      logger: this.logger,
-      serverList: this.options.serverList,
-    });
+    this._serverProxy = new NamingProxy(this.options);
     this._beatReactor = new BeatReactor({
       serverProxy: this._serverProxy,
       logger: this.logger,
@@ -56,43 +54,61 @@ class NacosNamingClient extends Base {
     return this.options.logger;
   }
 
-  async registerInstance(serviceName, ip, port, clusterName = Constants.NAMING_DEFAULT_CLUSTER_NAME) {
-    let instance = null;
-    if (typeof ip === 'object') {
-      instance = new Instance(ip);
-    } else {
-      instance = new Instance({
-        ip,
-        port,
-        weight: 1,
-        clusterName,
-      });
+  async registerInstance(serviceName, instance, groupName = Constants.DEFAULT_GROUP) {
+    if (!(instance instanceof Instance)) {
+      instance = new Instance(instance);
     }
-    const beatInfo = {
-      port: instance.port,
-      ip: instance.ip,
-      weight: instance.weight,
-      metadata: instance.metadata,
-      dom: serviceName,
-    };
-    this._beatReactor.addBeatInfo(serviceName, beatInfo);
-    await this._serverProxy.registerService(serviceName, instance);
+    const serviceNameWithGroup = utils.getGroupedName(serviceName, groupName);
+    if (instance.ephemeral) {
+      const beatInfo = {
+        serviceName: serviceNameWithGroup,
+        ip: instance.ip,
+        port: instance.port,
+        cluster: instance.clusterName,
+        weight: instance.weight,
+        metadata: instance.metadata,
+        scheduled: false,
+      };
+      this._beatReactor.addBeatInfo(serviceNameWithGroup, beatInfo);
+    }
+    await this._serverProxy.registerService(serviceNameWithGroup, groupName, instance);
   }
 
-  async deregisterInstance(serviceName, ip, port, clusterName = Constants.NAMING_DEFAULT_CLUSTER_NAME) {
-    this._beatReactor.removeBeatInfo(serviceName, ip, port);
-    await this._serverProxy.deregisterService(serviceName, ip, port, clusterName);
+  async deregisterInstance(serviceName, instance, groupName = Constants.DEFAULT_GROUP) {
+    if (!(instance instanceof Instance)) {
+      instance = new Instance(instance);
+    }
+    const serviceNameWithGroup = utils.getGroupedName(serviceName, groupName);
+    this._beatReactor.removeBeatInfo(serviceNameWithGroup, instance.ip, instance.port);
+    await this._serverProxy.deregisterService(serviceName, instance);
   }
 
-  async getAllInstances(serviceName, clusters = []) {
-    const serviceInfo = await this._hostReactor.getServiceInfo({
-      serviceName,
-      clusters,
-      allIPs: false,
-      env: '',
-    });
+  async getAllInstances(serviceName, groupName = Constants.DEFAULT_GROUP, clusters = '', subscribe = true) {
+    let serviceInfo;
+    const serviceNameWithGroup = utils.getGroupedName(serviceName, groupName);
+    if (subscribe) {
+      serviceInfo = await this._hostReactor.getServiceInfo(serviceNameWithGroup, clusters);
+    } else {
+      serviceInfo = await this._hostReactor.getServiceInfoDirectlyFromServer(serviceNameWithGroup, clusters);
+    }
     if (!serviceInfo) return [];
     return serviceInfo.hosts;
+  }
+
+  async selectInstances(serviceName, groupName = Constants.DEFAULT_GROUP, clusters = '', healthy = true, subscribe = true) {
+    let serviceInfo;
+    const serviceNameWithGroup = utils.getGroupedName(serviceName, groupName);
+    if (subscribe) {
+      serviceInfo = await this._hostReactor.getServiceInfo(serviceNameWithGroup, clusters);
+    } else {
+      serviceInfo = await this._hostReactor.getServiceInfoDirectlyFromServer(serviceNameWithGroup, clusters);
+    }
+    if (!serviceInfo || !serviceInfo.hosts || !serviceInfo.hosts.length) {
+      return [];
+    }
+    return serviceInfo.hosts.filter(host => {
+      return host.healthy === healthy && host.enabled && host.weight > 0;
+    });
   }
 
   async getServerStatus() {
@@ -106,7 +122,12 @@ class NacosNamingClient extends Base {
         serviceName: info,
       };
     }
-    this._hostReactor.subscribe(info, listener);
+    const groupName = info.groupName || Constants.DEFAULT_GROUP;
+    const serviceNameWithGroup = utils.getGroupedName(info.serviceName, groupName);
+    this._hostReactor.subscribe({
+      serviceName: serviceNameWithGroup,
+      clusters: info.clusters || '',
+    }, listener);
   }
 
   unSubscribe(info, listener) {
@@ -115,12 +136,17 @@ class NacosNamingClient extends Base {
         serviceName: info,
       };
     }
-    this._hostReactor.unSubscribe(info, listener);
+    const groupName = info.groupName || Constants.DEFAULT_GROUP;
+    const serviceNameWithGroup = utils.getGroupedName(info.serviceName, groupName);
+    this._hostReactor.unSubscribe({
+      serviceName: serviceNameWithGroup,
+      clusters: info.clusters || '',
+    }, listener);
   }
 
-  close() {
-    this._beatReactor.close();
-    this._hostReactor.close();
+  async _close() {
+    await this._beatReactor.close();
+    await this._hostReactor.close();
   }
 }
 

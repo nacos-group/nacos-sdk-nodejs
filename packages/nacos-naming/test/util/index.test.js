@@ -29,4 +29,24 @@ describe('test/util/index.test.js', () => {
     const zipped = zlib.gzipSync(buf);
     assert.deepEqual(util.tryDecompress(zipped), buf);
   });
+
+  it('should getGroupedName ok', () => {
+    const serviceWithGroupName = util.getGroupedName('serviceName', 'groupName');
+    assert(serviceWithGroupName === 'groupName@@serviceName');
+  });
+
+  it('should getServiceName ok', () => {
+    assert(util.getServiceName('groupName@@serviceName') === 'serviceName');
+    assert(util.getServiceName('serviceName') === 'serviceName');
+  });
+
+  it('should getGroupName ok', () => {
+    assert(util.getGroupName('groupName@@serviceName') === 'groupName');
+    assert(util.getGroupName('serviceName') === 'DEFAULT_GROUP');
+  });
+
+  it('should sign ok', () => {
+    const result = util.sign('1556606455782@@nodejs.test', 'xxxxxx');
+    assert(result === 'hhmW6gWCqR0g8dctGZXQclYomYg=');
+  });
 });

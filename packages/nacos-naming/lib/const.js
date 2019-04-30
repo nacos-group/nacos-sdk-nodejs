@@ -17,7 +17,7 @@
 
 'use strict';
 
-exports.VERSION = 'Nacos-Java-Client:v0.1.0';
+exports.VERSION = 'Nacos-Java-Client:v1.0.0';
 
 exports.ENCODING = 'UTF-8';
 
@@ -46,3 +46,7 @@ exports.SERVER_ADDR_IP_SPLITER = ':';
 exports.NAMING_INSTANCE_ID_SPLITTER = '#';
 
 exports.NAMING_DEFAULT_CLUSTER_NAME = 'DEFAULT';
+
+exports.SERVICE_INFO_SPLITER = '@@';
+
+exports.DEFAULT_GROUP = 'DEFAULT_GROUP';
