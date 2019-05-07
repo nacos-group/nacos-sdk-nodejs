@@ -38,25 +38,25 @@
   },
   "ci": {
     "type": "travis",
-    "version": "8, 10"
+    "version": "8, 10, 12"
   },
   "dependencies": {
-    "address": "^1.0.3",
+    "address": "^1.1.0",
     "mz-modules": "^2.1.0",
-    "sdk-base": "^3.5.1",
-    "urllib": "^2.33.0",
-    "utility": "^1.15.0",
+    "sdk-base": "^3.6.0",
+    "urllib": "^2.33.3",
+    "utility": "^1.16.1",
     "uuid": "^3.3.2"
   },
   "devDependencies": {
-    "autod": "^3.0.1",
+    "autod": "^3.1.0",
     "await-event": "^2.1.0",
     "contributors": "^0.5.1",
-    "egg-bin": "^4.10.0",
+    "egg-bin": "^4.13.1",
     "egg-ci": "^1.11.0",
-    "eslint": "^5.12.0",
-    "eslint-config-egg": "^7.1.0",
-    "mm": "^2.4.1",
+    "eslint": "^5.16.0",
+    "eslint-config-egg": "^7.3.1",
+    "mm": "^2.5.0",
     "mz-modules": "^2.1.0"
   }
 }

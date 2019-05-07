@@ -19,14 +19,22 @@
 
 const uuid = require('uuid/v4');
 const Base = require('sdk-base');
+const utils = require('../util');
 const assert = require('assert');
 const utility = require('utility');
 const Constants = require('../const');
+const localIp = require('address').ip();
+const sleep = require('mz-modules/sleep');
 
 const defaultOptions = {
   namespace: 'default',
   httpclient: require('urllib'),
   ssl: false,
+  ak: null,
+  sk: null,
+  appName: '',
+  endpoint: null,
+  vipSrvRefInterMillis: 30000,
 };
 const DEFAULT_SERVER_PORT = 8848;
 
@@ -36,17 +44,23 @@ class NameProxy extends Base {
     if (typeof options.serverList === 'string' && options.serverList) {
       options.serverList = options.serverList.split(',');
     }
-    super(Object.assign({}, defaultOptions, options));
-    // 硬负载域名
-    if (options.serverList.length === 1) {
-      this.nacosDomain = options.serverList[0];
-    }
+    super(Object.assign({}, defaultOptions, options, { initMethod: '_init' }));
+
     this.serverList = options.serverList || [];
-    this.ready(true);
+    // 硬负载域名
+    if (this.serverList.length === 1) {
+      this.nacosDomain = this.serverList[0];
+    }
+    this.serversFromEndpoint = [];
+    this.lastSrvRefTime = 0;
   }
 
   get logger() {
     return this.options.logger;
+  }
+
+  get endpoint() {
+    return this.options.endpoint;
   }
 
   get namespace() {
@@ -57,14 +71,89 @@ class NameProxy extends Base {
     return this.options.httpclient;
   }
 
-  async _callServer(serverAddr, method, api, params) {
-    const headers = {
+  async _getServerListFromEndpoint() {
+    const urlString = 'http://' + this.endpoint + '/nacos/serverlist';
+    const headers = this._builderHeaders();
+
+    const result = await this.httpclient.request(urlString, {
+      method: 'GET',
+      headers,
+      dataType: 'text',
+    });
+    if (result.status !== 200) {
+      throw new Error('Error while requesting: ' + urlString + ', Server returned: ' + result.status);
+    }
+    const content = result.data;
+    return content.split('\r\n');
+  }
+
+  async _refreshSrvIfNeed() {
+    if (this.serverList.length !== 0) {
+      return;
+    }
+
+    if (Date.now() - this.lastSrvRefTime < this.options.vipSrvRefInterMillis) {
+      return;
+    }
+
+    try {
+      const list = await this._getServerListFromEndpoint();
+      if (!list || !list.length) {
+        throw new Error('Can not acquire Nacos list');
+      }
+
+      this.serversFromEndpoint = list;
+      this.lastSrvRefTime = Date.now();
+    } catch (err) {
+      this.logger.warn(err);
+    }
+  }
+
+  async _init() {
+    if (!this.endpoint) return;
+
+    await this._refreshSrvIfNeed();
+    this._refreshLoop();
+  }
+
+  async _refreshLoop() {
+    while (!this._closed) {
+      await sleep(this.options.vipSrvRefInterMillis);
+      await this._refreshSrvIfNeed();
+    }
+  }
+
+  _getSignData(serviceName) {
+    return serviceName ? Date.now() + '@@' + serviceName : Date.now() + '';
+  }
+
+  _checkSignature(params) {
+    const { ak, sk, appName } = this.options;
+    if (!ak && !sk) return;
+
+    const signData = this._getSignData(params.serviceName);
+    const signature = utils.sign(signData, sk);
+    params.signature = signature;
+    params.data = signData;
+    params.ak = ak;
+    params.app = appName;
+  }
+
+  _builderHeaders() {
+    return {
+      'User-Agent': Constants.VERSION,
       'Client-Version': Constants.VERSION,
       'Accept-Encoding': 'gzip,deflate,sdch',
+      'Request-Module': 'Naming',
       Connection: 'Keep-Alive',
       RequestId: uuid(),
-      'User-Agent': 'Nacos-Java-Client',
     };
+  }
+
+  async _callServer(serverAddr, method, api, params = {}) {
+    this._checkSignature(params);
+    params.namespaceId = this.namespace;
+    const headers = this._builderHeaders();
 
     if (!serverAddr.includes(Constants.SERVER_ADDR_IP_SPLITER)) {
       serverAddr = serverAddr + Constants.SERVER_ADDR_IP_SPLITER + DEFAULT_SERVER_PORT;
@@ -87,12 +176,13 @@ class NameProxy extends Base {
     }
     const err = new Error('failed to req API: ' + url + '. code: ' + result.status + ' msg: ' + result.data);
     err.name = 'NacosException';
+    err.status = result.status;
     throw err;
   }
 
-  async reqAPI(api, params, method) {
+  async _reqAPI(api, params, method) {
     // TODO:
-    const servers = this.serverList;
+    const servers = this.serverList.length ? this.serverList : this.serversFromEndpoint;
     const size = servers.length;
 
     if (size === 0 && !this.nacosDomain) {
@@ -123,41 +213,94 @@ class NameProxy extends Base {
     throw new Error('failed to req API: ' + api + ' after all servers(' + this.nacosDomain + ') tried');
   }
 
-  async registerService(serviceName, instance) {
-    this.logger.info('[NameProxy][REGISTER-SERVICE] registering service: %s with instance:%j', serviceName, instance);
+  async registerService(serviceName, groupName, instance) {
+    this.logger.info('[NameProxy][REGISTER-SERVICE] %s registering service: %s with instance:%j', this.namespace, serviceName, instance);
 
     const params = {
-      tenant: this.namespace,
+      namespaceId: this.namespace,
+      serviceName,
+      groupName,
+      clusterName: instance.clusterName,
       ip: instance.ip,
       port: instance.port + '',
       weight: instance.weight + '',
       enable: instance.enabled ? 'true' : 'false',
       healthy: instance.healthy ? 'true' : 'false',
+      ephemeral: instance.ephemeral ? 'true' : 'false',
       metadata: JSON.stringify(instance.metadata),
-      clusterName: instance.clusterName,
-      serviceName,
     };
-    return await this.reqAPI(Constants.NACOS_URL_INSTANCE, params, 'PUT');
+    return await this._reqAPI(Constants.NACOS_URL_INSTANCE, params, 'POST');
   }
 
-  async deregisterService(serviceName, ip, port, cluster) {
+  async deregisterService(serviceName, instance) {
+    this.logger.info('[NameProxy][DEREGISTER-SERVICE] %s deregistering service: %s with instance:%j', this.namespace, serviceName, instance);
+
     const params = {
-      tenant: this.namespace,
-      ip,
-      port: port + '',
+      namespaceId: this.namespace,
       serviceName,
-      cluster,
+      clusterName: instance.clusterName,
+      ip: instance.ip,
+      port: instance.port + '',
+      ephemeral: instance.ephemeral !== false ? 'true' : 'false',
     };
-    return await this.reqAPI(Constants.NACOS_URL_INSTANCE, params, 'DELETE');
+    return await this._reqAPI(Constants.NACOS_URL_INSTANCE, params, 'DELETE');
+  }
+
+  async queryList(serviceName, clusters, udpPort, healthyOnly) {
+    const params = {
+      namespaceId: this.namespace,
+      serviceName,
+      clusters,
+      udpPort: udpPort + '',
+      clientIP: localIp,
+      healthyOnly: healthyOnly ? 'true' : 'false',
+    };
+    return await this._reqAPI(Constants.NACOS_URL_BASE + '/instance/list', params, 'GET');
   }
 
   async serverHealthy() {
     try {
-      await this.reqAPI(Constants.NACOS_URL_BASE + '/api/hello', {}, 'GET');
+      const str = await this._reqAPI(Constants.NACOS_URL_BASE + '/operator/metrics', {}, 'GET');
+      const result = JSON.parse(str);
+      return result && result.status === 'UP';
     } catch (_) {
       return false;
     }
-    return true;
+  }
+
+  async sendBeat(beatInfo) {
+    try {
+      const params = {
+        beat: JSON.stringify(beatInfo),
+        namespaceId: this.namespace,
+        serviceName: beatInfo.serviceName,
+      };
+      const jsonStr = await this._reqAPI(Constants.NACOS_URL_BASE + '/instance/beat', params, 'PUT');
+      const result = JSON.parse(jsonStr);
+      if (result && result.clientBeatInterval) {
+        return Number(result.clientBeatInterval);
+      }
+    } catch (err) {
+      err.message = `[CLIENT-BEAT] failed to send beat: ${JSON.stringify(beatInfo)}, caused by ${err.message}`;
+      this.logger.error(err);
+    }
+    return 0;
+  }
+
+  async getServiceList(pageNo, pageSize, groupName) {
+    const params = {
+      pageNo: pageNo + '',
+      pageSize: pageSize + '',
+      namespaceId: this.namespace,
+      groupName,
+    };
+    // TODO: selector
+    const result = await this._reqAPI(Constants.NACOS_URL_BASE + '/service/list', params, 'GET');
+    const json = JSON.parse(result);
+    return {
+      count: Number(json.count),
+      data: json.doms,
+    };
   }
 }
 

@@ -18,6 +18,8 @@
 'use strict';
 
 const zlib = require('zlib');
+const crypto = require('crypto');
+const Constants = require('../const');
 
 const GZIP_MAGIC = 35615;
 
@@ -35,4 +37,26 @@ exports.tryDecompress = buf => {
     return buf;
   }
   return zlib.gunzipSync(buf);
+};
+
+exports.sign = (data, key) => {
+  return crypto.createHmac('sha1', key).update(data).digest('base64');
+};
+
+exports.getGroupedName = (serviceName, groupName) => {
+  return groupName + Constants.SERVICE_INFO_SPLITER + serviceName;
+};
+
+exports.getServiceName = serviceNameWithGroup => {
+  if (!serviceNameWithGroup.includes(Constants.SERVICE_INFO_SPLITER)) {
+    return serviceNameWithGroup;
+  }
+  return serviceNameWithGroup.split(Constants.SERVICE_INFO_SPLITER)[1];
+};
+
+exports.getGroupName = serviceNameWithGroup => {
+  if (!serviceNameWithGroup.includes(Constants.SERVICE_INFO_SPLITER)) {
+    return Constants.DEFAULT_GROUP;
+  }
+  return serviceNameWithGroup.split(Constants.SERVICE_INFO_SPLITER)[0];
 };

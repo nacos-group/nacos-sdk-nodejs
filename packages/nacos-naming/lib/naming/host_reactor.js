@@ -22,13 +22,15 @@ const Base = require('sdk-base');
 const Constants = require('../const');
 const ServiceInfo = require('./service_info');
 const PushReceiver = require('./push_receiver');
-const localIp = require('address').ip();
 
 class HostReactor extends Base {
   constructor(options = {}) {
     assert(options.logger, '[HostReactor] options.logger is required');
     assert(options.serverProxy, '[HostReactor] options.serverProxy is required');
     super(Object.assign({}, options, { initMethod: '_init' }));
+
+    // TODO:
+    // cacheDir
 
     this._serviceInfoMap = new Map();
     this._updatingSet = new Set();
@@ -53,7 +55,10 @@ class HostReactor extends Base {
   }
 
   async _init() {
-    await this._pushReceiver.ready();
+    await Promise.all([
+      this.serverProxy.ready(),
+      this._pushReceiver.ready(),
+    ]);
   }
 
   processServiceJSON(json) {
@@ -134,10 +139,8 @@ class HostReactor extends Base {
 
   _getKey(param) {
     const serviceName = param.serviceName;
-    const clusters = (param.clusters || []).join(',');
-    const env = param.env || '';
-    const allIPs = param.allIPs || false;
-    return ServiceInfo.getKey(serviceName, clusters, env, allIPs);
+    const clusters = param.clusters || Constants.NAMING_DEFAULT_CLUSTER_NAME;
+    return ServiceInfo.getKey(serviceName, clusters);
   }
 
   subscribe(param, listener) {
@@ -146,7 +149,7 @@ class HostReactor extends Base {
     if (serviceInfo) {
       setImmediate(() => { listener(serviceInfo.hosts); });
     } else {
-      this.getServiceInfo(param);
+      this.getServiceInfo(param.serviceName, param.clusters || Constants.NAMING_DEFAULT_CLUSTER_NAME);
     }
     this.on(key + '_changed', listener);
   }
@@ -160,12 +163,16 @@ class HostReactor extends Base {
     }
   }
 
-  async getServiceInfo(param) {
-    const serviceName = param.serviceName;
-    const clusters = (param.clusters || []).join(',');
-    const env = param.env || '';
-    const allIPs = param.allIPs || false;
-    const key = ServiceInfo.getKey(serviceName, clusters, env, allIPs);
+  async getServiceInfoDirectlyFromServer(serviceName, clusters = Constants.NAMING_DEFAULT_CLUSTER_NAME) {
+    const result = await this.serverProxy.queryList(serviceName, clusters, 0, false);
+    if (result) {
+      return this.processServiceJSON(result);
+    }
+    return null;
+  }
+
+  async getServiceInfo(serviceName, clusters = Constants.NAMING_DEFAULT_CLUSTER_NAME) {
+    const key = ServiceInfo.getKey(serviceName, clusters);
     // TODO: failover
 
     let serviceInfo = this._serviceInfoMap.get(key);
@@ -173,121 +180,54 @@ class HostReactor extends Base {
       serviceInfo = new ServiceInfo({
         name: serviceName,
         clusters,
-        env,
-        allIPs,
         hosts: [],
       });
       this._serviceInfoMap.set(key, serviceInfo);
       this._updatingSet.add(key);
-
-      if (allIPs) {
-        await this.updateService4AllIPNow(serviceName, clusters, env);
-      } else {
-        await this.updateServiceNow(serviceName, clusters, env);
-      }
-
+      await this.updateServiceNow(serviceName, clusters);
       this._updatingSet.delete(key);
     } else if (this._updatingSet.has(key)) {
       // await updating
       await this.await(`${key}_changed`);
     }
-    this._scheduleUpdateIfAbsent(serviceName, clusters, env, allIPs);
+    this._scheduleUpdateIfAbsent(serviceName, clusters);
     return this._serviceInfoMap.get(key);
   }
 
-  async updateService4AllIPNow(serviceName, clusters, env) {
+  async updateServiceNow(serviceName, clusters) {
     try {
-      const params = {
-        dom: serviceName,
-        clusters,
-        udpPort: this._pushReceiver.udpPort + '',
-      };
-      const key = ServiceInfo.getKey(serviceName, clusters, env, true);
-      const oldService = this._serviceInfoMap.get(key);
-      if (oldService) {
-        params.checksum = oldService.checksum;
-      }
-
-      const result = await this.serverProxy.reqAPI(Constants.NACOS_URL_BASE + '/api/srvAllIP', params);
-      if (result) {
-        const serviceInfo = this.processServiceJSON(result);
-        serviceInfo.isAllIPs = true;
-      }
-      this.logger.debug('[HostReactor] updateService4AllIPNow() serviceName: %s, clusters: %s, env: %s, result: %s',
-        serviceName, clusters, env, result);
-    } catch (err) {
-      err.message = 'failed to update serviceName: ' + serviceName + ', caused by: ' + err.message;
-      this.emit('error', err);
-    }
-  }
-
-  async updateServiceNow(serviceName, clusters, env) {
-    const key = ServiceInfo.getKey(serviceName, clusters, env, false);
-    const oldService = this._serviceInfoMap.get(key);
-    try {
-      const params = {
-        dom: serviceName,
-        clusters,
-        udpPort: this._pushReceiver.udpPort + '',
-        env,
-        clientIP: localIp,
-        unconsistentDom: '', // TODO:
-      };
-
-      const envSpliter = ',';
-      if (env && !env.includes(envSpliter)) {
-        params.useEnvId = 'true';
-      }
-      if (oldService) {
-        params.checksum = oldService.checksum;
-      }
-      const result = await this.serverProxy.reqAPI(Constants.NACOS_URL_BASE + '/api/srvIPXT', params);
+      const result = await this.serverProxy.queryList(serviceName, clusters, this._pushReceiver.udpPort, false);
       if (result) {
         this.processServiceJSON(result);
       }
-      this.logger.debug('[HostReactor] updateServiceNow() serviceName: %s, clusters: %s, env: %s, result: %s',
-        serviceName, clusters, env, result);
+      this.logger.debug('[HostReactor] updateServiceNow() serviceName: %s, clusters: %s, result: %s', serviceName, clusters, result);
     } catch (err) {
       err.message = 'failed to update serviceName: ' + serviceName + ', caused by: ' + err.message;
-      this.emit('error', err);
-    }
-  }
-
-  async refreshOnly(serviceName, clusters, env, allIPs) {
-    try {
-      const params = {
-        dom: serviceName,
-        clusters,
-        udpPort: this._pushReceiver.udpPort + '',
-        unit: env,
-        clientIP: localIp,
-        unconsistentDom: '', // TODO:
-      };
-
-      const envSpliter = ',';
-      if (env && !env.includes(envSpliter)) {
-        params.useEnvId = 'true';
-      }
-
-      if (allIPs) {
-        await this.serverProxy.reqAPI(Constants.NACOS_URL_BASE + '/api/srvAllIP', params);
+      if (err.status === 404) {
+        this.logger.warn(err.message);
       } else {
-        await this.serverProxy.reqAPI(Constants.NACOS_URL_BASE + '/api/srvIPXT', params);
+        this.emit('error', err);
       }
+    }
+  }
+
+  async refreshOnly(serviceName, clusters) {
+    try {
+      await this.serverProxy.queryList(serviceName, clusters, this._pushReceiver.udpPort, false);
     } catch (err) {
       err.message = 'failed to update serviceName: ' + serviceName + ', caused by: ' + err.message;
       this.emit('error', err);
     }
   }
 
-  _scheduleUpdateIfAbsent(serviceName, clusters, env, allIPs) {
-    const key = ServiceInfo.getKey(serviceName, clusters, env, allIPs);
+  _scheduleUpdateIfAbsent(serviceName, clusters) {
+    const key = ServiceInfo.getKey(serviceName, clusters);
     if (this._futureMap.has(key)) {
       return;
     }
     // 第一次延迟 1s 更新
     const timer = setTimeout(() => {
-      this._doUpdate(serviceName, clusters, env, allIPs)
+      this._doUpdate(serviceName, clusters)
         .catch(err => {
           this.emit('error', err);
         });
@@ -299,24 +239,20 @@ class HostReactor extends Base {
     this._futureMap.set(key, task);
   }
 
-  async _doUpdate(serviceName, clusters, env, allIPs) {
-    const key = ServiceInfo.getKey(serviceName, clusters, env, allIPs);
+  async _doUpdate(serviceName, clusters) {
+    const key = ServiceInfo.getKey(serviceName, clusters);
     const task = this._futureMap.get(key);
     if (!task) return;
 
     const serviceInfo = this._serviceInfoMap.get(key);
     if (!serviceInfo || serviceInfo.lastRefTime <= task.lastRefTime) {
-      if (allIPs) {
-        await this.updateService4AllIPNow(serviceName, clusters, env);
-      } else {
-        await this.updateServiceNow(serviceName, clusters, env);
-      }
+      await this.updateServiceNow(serviceName, clusters);
     } else {
-      this.logger.debug('[HostReactor] refreshOnly, serviceInfo.lastRefTime: %s, task.lastRefTime: %s, serviceName: %s, clusters: %s, env: %s',
-        serviceInfo.lastRefTime, task.lastRefTime, serviceName, clusters, env);
+      this.logger.debug('[HostReactor] refreshOnly, serviceInfo.lastRefTime: %s, task.lastRefTime: %s, serviceName: %s, clusters: %s',
+        serviceInfo.lastRefTime, task.lastRefTime, serviceName, clusters);
       // if serviceName already updated by push, we should not override it
       // since the push data may be different from pull through force push
-      await this.refreshOnly(serviceName, clusters, env, allIPs);
+      await this.refreshOnly(serviceName, clusters);
     }
 
     if (this._futureMap.has(key)) {
@@ -327,7 +263,7 @@ class HostReactor extends Base {
         task.lastRefTime = serviceInfo.lastRefTime;
       }
       const timer = setTimeout(() => {
-        this._doUpdate(serviceName, clusters, env, allIPs)
+        this._doUpdate(serviceName, clusters)
           .catch(err => {
             this.emit('error', err);
           });
@@ -337,7 +273,7 @@ class HostReactor extends Base {
     }
   }
 
-  close() {
+  async _close() {
     this._pushReceiver.close();
     this._updatingSet.clear();
 

@@ -36,18 +36,32 @@ describe('test/naming/client.test.js', () => {
     await client.ready();
   });
   afterEach(mm.restore);
-  after(() => {
-    client.close();
+  after(async () => {
+    await client.close();
   });
 
   it('should registerInstance & deregisterInstance ok', async function() {
-    client.subscribe(serviceName, hosts => {
+    client.subscribe({
+      serviceName,
+      clusters: 'NODEJS',
+    }, hosts => {
       console.log(hosts);
       client.emit('update', hosts);
     });
 
-    client.registerInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
-    client.registerInstance(serviceName, '2.2.2.2', 8080, 'NODEJS');
+    const instance_1 = {
+      ip: '1.1.1.1',
+      port: 8080,
+      clusterName: 'NODEJS',
+    };
+    const instance_2 = {
+      ip: '2.2.2.2',
+      port: 8080,
+      clusterName: 'NODEJS',
+    };
+
+    client.registerInstance(serviceName, instance_1);
+    client.registerInstance(serviceName, instance_2);
 
     let hosts = [];
 
@@ -58,7 +72,7 @@ describe('test/naming/client.test.js', () => {
     assert(hosts.find(host => host.ip === '1.1.1.1' && host.port === 8080));
     assert(hosts.find(host => host.ip === '2.2.2.2' && host.port === 8080));
 
-    client.deregisterInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
+    client.deregisterInstance(serviceName, instance_1);
 
     while (hosts.length !== 1) {
       hosts = await client.await('update');
@@ -66,7 +80,54 @@ describe('test/naming/client.test.js', () => {
 
     assert(hosts.find(host => host.ip === '2.2.2.2' && host.port === 8080));
 
-    client.deregisterInstance(serviceName, '2.2.2.2', 8080, 'NODEJS');
+    client.deregisterInstance(serviceName, instance_2);
+
+    while (hosts.length !== 0) {
+      hosts = await client.await('update');
+    }
+
+    client.unSubscribe({
+      serviceName,
+      clusters: 'NODEJS',
+    });
+  });
+
+  it('should registerInstance & deregisterInstance with default cluster ok', async function() {
+    client.subscribe(serviceName, hosts => {
+      console.log(hosts);
+      client.emit('update', hosts);
+    });
+
+    const instance_1 = {
+      ip: '1.1.1.1',
+      port: 8080,
+    };
+    const instance_2 = {
+      ip: '2.2.2.2',
+      port: 8080,
+    };
+
+    client.registerInstance(serviceName, instance_1);
+    client.registerInstance(serviceName, instance_2);
+
+    let hosts = [];
+
+    while (hosts.length !== 2) {
+      hosts = await client.await('update');
+    }
+
+    assert(hosts.find(host => host.ip === '1.1.1.1' && host.port === 8080));
+    assert(hosts.find(host => host.ip === '2.2.2.2' && host.port === 8080));
+
+    client.deregisterInstance(serviceName, instance_1);
+
+    while (hosts.length !== 1) {
+      hosts = await client.await('update');
+    }
+
+    assert(hosts.find(host => host.ip === '2.2.2.2' && host.port === 8080));
+
+    client.deregisterInstance(serviceName, instance_2);
 
     while (hosts.length !== 0) {
       hosts = await client.await('update');
@@ -104,9 +165,19 @@ describe('test/naming/client.test.js', () => {
   });
 
   it('should getAllInstances ok', async function() {
-    await client.registerInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
-    await client.registerInstance(serviceName, '2.2.2.2', 8080, 'OTHERS');
-
+    const serviceName = 'nodejs.test.getAllInstances' + process.versions.node;
+    const instance_1 = {
+      ip: '1.1.1.1',
+      port: 8080,
+      clusterName: 'NODEJS',
+    };
+    const instance_2 = {
+      ip: '2.2.2.2',
+      port: 8080,
+      clusterName: 'OTHERS',
+    };
+    await client.registerInstance(serviceName, instance_1);
+    await client.registerInstance(serviceName, instance_2);
     await sleep(2000);
 
     let hosts = await client.getAllInstances(serviceName);
@@ -114,16 +185,87 @@ describe('test/naming/client.test.js', () => {
     assert(hosts.find(host => host.ip === '1.1.1.1' && host.port === 8080));
     assert(hosts.find(host => host.ip === '2.2.2.2' && host.port === 8080));
 
-    hosts = await client.getAllInstances(serviceName, ['NODEJS']);
+    hosts = await client.getAllInstances(serviceName, 'DEFAULT_GROUP', 'NODEJS,OTHERS');
+    assert(hosts.length === 2);
+    assert(hosts.find(host => host.ip === '1.1.1.1' && host.port === 8080));
+    assert(hosts.find(host => host.ip === '2.2.2.2' && host.port === 8080));
+
+    hosts = await client.getAllInstances(serviceName, 'DEFAULT_GROUP', 'NODEJS,OTHERS', false);
+    assert(hosts.length === 2);
+    assert(hosts.find(host => host.ip === '1.1.1.1' && host.port === 8080));
+    assert(hosts.find(host => host.ip === '2.2.2.2' && host.port === 8080));
+
+    hosts = await client.getAllInstances(serviceName, 'DEFAULT_GROUP', 'NODEJS');
     assert(hosts.length === 1);
     assert(hosts.find(host => host.ip === '1.1.1.1' && host.port === 8080));
 
-    await client.deregisterInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
-    await client.deregisterInstance(serviceName, '2.2.2.2', 8080, 'OTHERS');
+    await client.deregisterInstance(serviceName, instance_1);
+    await client.deregisterInstance(serviceName, instance_2);
 
     await sleep(2000);
 
     hosts = await client.getAllInstances(serviceName);
+    assert(hosts.length === 0);
+  });
+
+  it('should selectInstances ok', async function() {
+    const serviceName = 'nodejs.test.selectInstance' + process.versions.node;
+    const instance_1 = {
+      ip: '11.11.11.11',
+      port: 8080,
+      healthy: true,
+      clusterName: 'NODEJS',
+      ephemeral: false,
+    };
+    const instance_2 = {
+      ip: '22.22.22.22',
+      port: 8080,
+      healthy: false,
+      clusterName: 'OTHERS',
+      ephemeral: false,
+    };
+    const instance_3 = {
+      ip: '33.33.33.33',
+      port: 8080,
+      healthy: true,
+      clusterName: 'OTHERS',
+      ephemeral: false,
+    };
+    await client.registerInstance(serviceName, instance_1);
+    await client.registerInstance(serviceName, instance_2);
+    await client.registerInstance(serviceName, instance_3);
+    await sleep(2000);
+
+    let hosts = await client.selectInstances(serviceName);
+    assert(hosts.length === 2);
+    assert(hosts.find(host => host.ip === '11.11.11.11' && host.port === 8080));
+    assert(hosts.find(host => host.ip === '33.33.33.33' && host.port === 8080));
+
+    hosts = await client.selectInstances(serviceName, 'DEFAULT_GROUP', 'NODEJS,OTHERS');
+    assert(hosts.length === 2);
+    assert(hosts.find(host => host.ip === '11.11.11.11' && host.port === 8080));
+    assert(hosts.find(host => host.ip === '33.33.33.33' && host.port === 8080));
+
+    hosts = await client.selectInstances(serviceName, 'DEFAULT_GROUP', 'NODEJS,OTHERS', false, false);
+    assert(hosts.length === 1);
+    // assert(hosts.find(host => host.ip === '1.1.1.1' && host.port === 8080));
+    assert(hosts.find(host => host.ip === '22.22.22.22' && host.port === 8080));
+
+    hosts = await client.selectInstances(serviceName, 'DEFAULT_GROUP', 'OTHERS');
+    assert(hosts.length === 1);
+    assert(hosts.find(host => host.ip === '33.33.33.33' && host.port === 8080));
+
+    hosts = await client.selectInstances(serviceName, 'DEFAULT_GROUP', 'OTHERS', false);
+    assert(hosts.length === 1);
+    assert(hosts.find(host => host.ip === '22.22.22.22' && host.port === 8080));
+
+    await client.deregisterInstance(serviceName, instance_1);
+    await client.deregisterInstance(serviceName, instance_2);
+    await client.deregisterInstance(serviceName, instance_3);
+
+    await sleep(2000);
+
+    hosts = await client.selectInstances(serviceName);
     assert(hosts.length === 0);
   });
 

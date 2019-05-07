@@ -36,63 +36,51 @@ describe('test/naming/service_info.test.js', () => {
         weight: 1.0,
         valid: true,
         enabled: true,
+        ephemeral: true,
         metadata: {},
       }],
     });
     assert(serviceInfo.ipCount === 1);
     assert(serviceInfo.isValid);
-    assert(serviceInfo.getKey() === 'xxx@@clusters@@000--00-ALL_IPS--00--000');
+    assert(serviceInfo.getKey() === 'xxx@@clusters');
 
     mm(serviceInfo, 'isAllIPs', false);
     assert(serviceInfo.getKey() === 'xxx@@clusters');
 
     mm(serviceInfo, 'env', 'test');
-    assert(serviceInfo.getKey() === 'xxx@@clusters@@test');
+    assert(serviceInfo.getKey() === 'xxx@@clusters');
 
     mm(serviceInfo, 'isAllIPs', true);
-    assert(serviceInfo.getKey() === 'xxx@@clusters@@test@@000--00-ALL_IPS--00--000');
+    assert(serviceInfo.getKey() === 'xxx@@clusters');
 
     mm(serviceInfo, 'clusters', null);
-    assert(serviceInfo.getKey() === 'xxx@@@@test@@000--00-ALL_IPS--00--000');
+    assert(serviceInfo.getKey() === 'xxx');
 
     mm(serviceInfo, 'isAllIPs', false);
-    assert(serviceInfo.getKey() === 'xxx@@@@test');
-
-    mm(serviceInfo, 'env', null);
     assert(serviceInfo.getKey() === 'xxx');
 
     mm(serviceInfo, 'isAllIPs', true);
-    assert(serviceInfo.getKey() === 'xxx@@000--00-ALL_IPS--00--000');
-    assert(serviceInfo.toString() === 'xxx@@000--00-ALL_IPS--00--000');
+    assert(serviceInfo.getKey() === 'xxx');
+    assert(serviceInfo.toString() === 'xxx');
   });
 
   it('should parse from string', () => {
-    let data = ServiceInfo.parse('xxx@@clusters@@000--00-ALL_IPS--00--000');
+    let data = ServiceInfo.fromKey('DEFAULT_GROUP@@xxx');
     assert(data.name === 'xxx');
-    assert(data.clusters === 'clusters');
-    assert(data.isAllIPs);
-
-    data = ServiceInfo.parse('xxx@@clusters@@test@@000--00-ALL_IPS--00--000');
-    assert(data.name === 'xxx');
-    assert(data.clusters === 'clusters');
-    assert(data.isAllIPs);
-    assert(data.env === 'test');
-
-    data = ServiceInfo.parse('xxx@@clusters');
-    assert(data.name === 'xxx');
-    assert(data.clusters === 'clusters');
-    assert(!data.isAllIPs);
-
-    data = ServiceInfo.parse('xxx@@clusters@@test');
-    assert(data.name === 'xxx');
-    assert(data.clusters === 'clusters');
-    assert(data.env === 'test');
-    assert(!data.isAllIPs);
-
-    data = ServiceInfo.parse('xxx@@000--00-ALL_IPS--00--000');
-    assert(data.name === 'xxx');
+    assert(data.groupName === 'DEFAULT_GROUP');
     assert(!data.clusters);
-    assert(!data.env);
-    assert(data.isAllIPs);
+    assert(!data.isAllIPs);
+
+    data = ServiceInfo.fromKey('DEFAULT_GROUP@@xxx@@clusters');
+    assert(data.name === 'xxx');
+    assert(data.clusters === 'clusters');
+    assert(!data.isAllIPs);
+    assert(data.groupName === 'DEFAULT_GROUP');
+
+    data = ServiceInfo.fromKey('xxx');
+    assert(!data.name);
+    assert(!data.clusters);
+    assert(!data.isAllIPs);
+    assert(!data.groupName);
   });
 });
