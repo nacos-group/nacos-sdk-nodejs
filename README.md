@@ -21,6 +21,13 @@
 npm install nacos --save
 ```
 
+## Version Mapping
+
+Node.js SDK \ Nacos Server | 0.x.0 | 1.0.0 |
+---                        |  ---  |  ---  |
+1.x                        |   √   |       |
+2.x                        |       |   √   |
+
 ## Usage
 
 ### Service Discovery
@@ -40,8 +47,14 @@ await client.ready();
 const serviceName = 'nodejs.test.domain';
 
 // registry instance
-await client.registerInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
-await client.registerInstance(serviceName, '2.2.2.2', 8080, 'NODEJS');
+await client.registerInstance(serviceName, {
+  ip: '1.1.1.1',
+  port: 8080,
+});
+await client.registerInstance(serviceName, {
+  ip: '2.2.2.2',
+  port: 8080,
+});
 
 // subscribe instance
 client.subscribe(serviceName, hosts => {
@@ -49,7 +62,10 @@ client.subscribe(serviceName, hosts => {
 });
 
 // deregister instance
-await client.deregisterInstance(serviceName, '1.1.1.1', 8080, 'NODEJS');
+await client.deregisterInstance(serviceName, {
+  ip: '1.1.1.1',
+  port: 8080,
+});
 ```
 
 ### Config Service
@@ -100,25 +116,35 @@ default value: [ClientOptions default value](https://github.com/nacos-group/naco
 
 ### Service Discovery
 
-- `registerInstance(serviceName, ip, port, [cluster])`  Register an instance to service.
+- `registerInstance(serviceName, instance, [groupName])`  Register an instance to service.
   - serviceName <String> Service name
-  - ip <String> IP of instance
-  - port <Number> Port of instance
-  - cluster <String> Virtual cluster name
+  - instance <Instance>
+    - ip <String> IP of instance
+    - port <Number> Port of instance
+    - [weight] <Number> weight of the instance, default is 1.0
+    - [ephemeral] <Boolean> active until the client is alive, default is true
+    - [clusterName] <String> Virtual cluster name
+  - [groupName] <String> group name, default is `DEFAULT_GROUP`
 - `deregisterInstance(serviceName, ip, port, [cluster])`  Delete instance from service.
   - serviceName <String> Service name
-  - ip <String> IP of instance
-  - port <Number> Port of instance
-  - cluster <String> Virtual cluster name
-- `getAllInstances(serviceName, [clusters])`  Query instance list of service.
+  - instance <Instance>
+    - ip <String> IP of instance
+    - port <Number> Port of instance
+    - [weight] <Number> weight of the instance, default is 1.0
+    - [ephemeral] <Boolean> active until the client is alive, default is true
+    - [clusterName] <String> Virtual cluster name
+  - [groupName] <String> group name, default is `DEFAULT_GROUP`
+- `getAllInstances(serviceName, [groupName], [clusters], [subscribe])`  Query instance list of service.
   - serviceName <String> Service name
-  - clusters <Array> Cluster names
+  - [groupName] <String> group name, default is `DEFAULT_GROUP`
+  - [clusters] <String> Cluster names
+  - [subscribe] <Boolean> whether subscribe the service, default is true
 - `getServerStatus()` Get the status of nacos server, 'UP' or 'DOWN'.
 - `subscribe(info, listener)` Subscribe the instances of the service
-  - info <Object | String> service info, if type is string, it's the serviceName
+  - info <Object>|<String> service info, if type is string, it's the serviceName
   - listener <Function> the listener function
-- unSubscribe(info, [listener]) Unsubscribe the instances of the service
-  - info <Object | String> service info, if type is string, it's the serviceName
+- `unSubscribe(info, [listener])` Unsubscribe the instances of the service
+  - info <Object>|<String> service info, if type is string, it's the serviceName
   - listener <Function> the listener function, if not provide, will unSubscribe all listeners under this service
 
 
