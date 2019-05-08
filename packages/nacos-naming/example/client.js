@@ -25,6 +25,7 @@ async function test() {
   const client = new NacosNamingClient({
     logger,
     serverList: '127.0.0.1:8848',
+    namespace: 'public',
   });
   await client.ready();
 
