@@ -142,7 +142,8 @@ export class DataClient extends Base implements BaseClient {
 
   /**
    * 查询租户下的所有的配置
-   * @return {Array} config
+   * @param {String} appName - appName
+   * @return {Promise<Array<{ dataId: string, content: string }>>} config
    */
   async getConfigs(appName) {
     const client = this.getClient();
