@@ -179,7 +179,7 @@ export interface IClientWorker {
   /**
    * @description 查询租户下的所有的配置
    */
-  getConfigs(): Promise<Array<string>>;
+  getConfigs(appName: string): Promise<{ [key: string]: string }[]>;
 
   /**
    * @description close connection
