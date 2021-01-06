@@ -107,6 +107,11 @@ export class HttpAgent {
     const endTime = Date.now() + timeout;
     let lastErr;
 
+    if (this.options.configuration.innerConfig.username &&
+        this.options.configuration.innerConfig.password) {
+      data.username = this.options.configuration.innerConfig.username;
+      data.password = this.options.configuration.innerConfig.password;
+    }
     let signStr = data.tenant;
     if (data.group && data.tenant) {
       signStr = data.tenant + '+' + data.group;

@@ -160,6 +160,10 @@ class NameProxy extends Base {
     }
 
     const url = (this.options.ssl ? 'https://' : 'http://') + serverAddr + api;
+    if (this.options.username && this.options.password) {
+      params.username = this.options.username;
+      params.password = this.options.password;
+    }
     const result = await this.httpclient.request(url, {
       method,
       headers,
