@@ -23,7 +23,6 @@ import { encodingParams, transformGBKToUTF8 } from './utils';
 export class HttpAgent {
 
   options;
-  currentServer: string;
   protected loggerDomain = 'Nacos';
   private debugPrefix = this.loggerDomain.toLowerCase();
   private debug = require('debug')(`${this.debugPrefix}:${process.pid}:http_agent`);
@@ -188,12 +187,12 @@ export class HttpAgent {
     if (/:/.test(currentServer)) {
       url = `http://${currentServer}`;
       if (this.ssl) {
-        url = `https://${this.currentServer}`;
+        url = `https://${currentServer}`;
       }
     } else {
       url = `http://${currentServer}:${this.serverPort}`;
       if (this.ssl) {
-        url = `https://${this.currentServer}:${this.serverPort}`;
+        url = `https://${currentServer}:${this.serverPort}`;
       }
     }
     return `${url}/${this.contextPath}`;
