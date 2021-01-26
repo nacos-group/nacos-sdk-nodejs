@@ -2,5 +2,23 @@
   "packages": [
     "packages/*"
   ],
+  "command": {
+    "bootstrap": {
+      "hoist": true,
+      "noCi": true,
+      "npmClientArgs": [
+        "--no-package-lock"
+      ]
+    },
+    "publish": {
+      "ignoreChanges": [
+        "*.md"
+      ]
+    },
+    "version": {
+      "conventionalCommits": true,
+      "createRelease": "github"
+    }
+  },
   "version": "2.0.0"
 }
