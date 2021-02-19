@@ -106,8 +106,8 @@ export class HttpAgent {
     const endTime = Date.now() + timeout;
     let lastErr;
 
-    if (this.options.configuration.innerConfig.username &&
-        this.options.configuration.innerConfig.password) {
+    if (this.options?.configuration?.innerConfig?.username &&
+        this.options?.configuration?.innerConfig?.password) {
       data.username = this.options.configuration.innerConfig.username;
       data.password = this.options.configuration.innerConfig.password;
     }
