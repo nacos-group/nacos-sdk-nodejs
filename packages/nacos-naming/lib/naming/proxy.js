@@ -288,7 +288,7 @@ class NameProxy extends Base {
       err.message = `[CLIENT-BEAT] failed to send beat: ${JSON.stringify(beatInfo)}, caused by ${err.message}`;
       this.logger.error(err);
     }
-    return 0;
+    return Constants.DEFAULT_DELAY;
   }
 
   async getServiceList(pageNo, pageSize, groupName) {
