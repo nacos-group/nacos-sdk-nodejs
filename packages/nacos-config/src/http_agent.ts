@@ -82,6 +82,14 @@ export class HttpAgent {
     return this.configuration.get(ClientOptionKeys.DEFAULT_ENCODING) || 'utf8';
   }
 
+  get identityKey() {
+    return this.configuration.get(ClientOptionKeys.IDENTITY_KEY);
+  }
+
+  get identityValue() {
+    return this.configuration.get(ClientOptionKeys.IDENTITY_VALUE);
+  }
+
 
   /**
    * 请求
@@ -130,6 +138,7 @@ export class HttpAgent {
       timeStamp: ts,
       exConfigInfo: 'true',
       'Spas-Signature': signature,
+      ...this.identityKey ? {[this.identityKey]: this.identityValue} : {}
     });
 
     let requestData = data;
