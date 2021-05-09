@@ -36,7 +36,7 @@ function getClient(configuration) {
 
 describe('test/client_worker.test.ts', () => {
 
-  describe('test features in direct mode', () => {
+  describe.skip('test features in direct mode', () => {
 
     const defaultOptions = {
       serverAddr: '127.0.0.1:8848',
@@ -257,7 +257,7 @@ describe('test/client_worker.test.ts', () => {
       client.close();
     });
 
-    it('should publishSingle ok', async () => {
+    it('should publishSingle ok2', async () => {
       let isSuccess = await client.publishSingle('test-dataId', 'test-group', 'test-content');
       assert(isSuccess);
 
