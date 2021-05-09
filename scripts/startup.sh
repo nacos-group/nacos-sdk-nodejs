@@ -2,8 +2,8 @@
 
 echo $JAVA_HOME
 java -version
-curl -o nacos-server-2.0.0.zip https://github.com/alibaba/nacos/archive/refs/tags/2.0.0.zip
-unzip nacos-server-2.0.0.zip
+curl -o nacos-server-2.0.1.zip https://github.com/alibaba/nacos/releases/download/2.0.1/nacos-server-2.0.1.zip
+unzip nacos-server-2.0.1.zip
 
 chmod 755 ./nacos/bin/startup.sh
 nohup ./nacos/bin/startup.sh -m standalone 2>&1 &
