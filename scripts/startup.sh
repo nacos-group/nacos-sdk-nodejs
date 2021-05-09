@@ -2,8 +2,8 @@
 
 echo $JAVA_HOME
 java -version
-curl -o nacos-server-2.0.1.zip https://github.com/alibaba/nacos/releases/download/2.0.1/nacos-server-2.0.1.zip
-jar xvf nacos-server-2.0.1.zip
+wget https://github.com/alibaba/nacos/releases/download/2.0.1/nacos-server-2.0.1.tar.gz
+tar xf nacos-server-2.0.1.tar.gz
 
 ls
 ls ./nacos
