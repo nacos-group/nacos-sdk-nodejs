@@ -31,7 +31,7 @@
   },
   "scripts": {
     "test": "jest",
-    "cov": "jest --coverage",
+    "cov": "jest --coverage --forceExit",
     "ci": "npm run cov",
     "build": "tsc"
   },
