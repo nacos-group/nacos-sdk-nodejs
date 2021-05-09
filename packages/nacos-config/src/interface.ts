@@ -262,6 +262,8 @@ export interface ClientOptions {
   unit?: string;              // 内部单元化用
   nameServerAddr?: string;    // 老的兼容参数，逐步废弃，同 endpoint
   cacheDir?: string;          // 缓存文件的路径
+  identityKey?: string;       // Identity Key
+  identityValue?: string;     // Identity Value
 }
 
 export enum ClientOptionKeys {
@@ -285,6 +287,8 @@ export enum ClientOptionKeys {
   HTTP_AGENT = 'httpAgent',
   SERVER_MGR = 'serverMgr',
   DEFAULT_ENCODING = 'defaultEncoding',
+  IDENTITY_KEY = 'identityKey',
+  IDENTITY_VALUE = 'identityValue',
 }
 
 export interface IConfiguration {
