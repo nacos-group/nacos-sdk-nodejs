@@ -17,33 +17,23 @@
     "mz": "^2.7.0",
     "mz-modules": "^2.1.0",
     "osenv": "^0.1.5",
-    "sdk-base": "^3.5.0",
+    "sdk-base": "^3.6.0",
     "urlencode": "^1.1.0",
-    "urllib": "^2.29.1",
-    "utility": "^1.14.0"
+    "urllib": "^2.33.3",
+    "utility": "^1.16.1"
   },
   "devDependencies": {
-    "@types/mocha": "^5.2.5",
-    "@types/node": "^10.9.4",
-    "contributors": "^0.5.1",
-    "midway-bin": "1",
-    "mm": "^2.4.1",
-    "pedding": "^1.1.0",
-    "tslint": "^5.11.0",
-    "typescript": "^3.2.2"
+    "mm": "^2.5.0",
+    "pedding": "^1.1.0"
   },
   "engines": {
     "node": ">= 8.0.0"
   },
   "scripts": {
-    "autod": "midway-bin autod",
-    "lint": "tslint . --ext .ts",
-    "test": "npm run test-local",
-    "test-local": "TEST_REPORTER=spec midway-bin test --ts",
-    "cov": "TEST_REPORTER=spec midway-bin cov --ts",
-    "contributors": "contributors",
-    "ci": "npm run lint && npm run cov",
-    "build": "midway-bin build --ts"
+    "test": "jest",
+    "cov": "jest --coverage",
+    "ci": "npm run cov",
+    "build": "tsc"
   },
   "files": [
     "d.ts",

@@ -15,28 +15,12 @@
     "nacos-config": "^2.1.0",
     "nacos-naming": "^2.1.0"
   },
-  "devDependencies": {
-    "@types/mocha": "^5.2.5",
-    "@types/node": "^10.9.4",
-    "contributors": "^0.5.1",
-    "midway-bin": "^0.3.2",
-    "mm": "^2.4.1",
-    "pedding": "^1.1.0",
-    "tslint": "^5.11.0",
-    "typescript": "^3.2.2"
-  },
   "engines": {
     "node": ">= 8.0.0"
   },
   "scripts": {
-    "autod": "midway-bin autod",
-    "lint": "tslint . --ext .ts",
-    "test": "npm run test-local",
-    "test-local": "TEST_REPORTER=spec midway-bin test --ts",
-    "cov": "TEST_REPORTER=spec midway-bin cov --ts",
-    "contributors": "contributors",
-    "ci": "npm run lint && npm run cov",
-    "build": "midway-bin build --ts"
+    "build": "tsc",
+    "ci": ""
   },
   "files": [
     "d.ts",

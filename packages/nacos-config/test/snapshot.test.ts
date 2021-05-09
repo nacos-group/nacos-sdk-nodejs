@@ -27,7 +27,7 @@ const cacheDir = path.join(__dirname, '.cache');
 
 describe('test/snapshot.test.ts', () => {
   let snapshot;
-  before(async () => {
+  beforeAll(async () => {
     const configuration = createDefaultConfiguration({
       cacheDir,
     });
@@ -35,7 +35,7 @@ describe('test/snapshot.test.ts', () => {
     await snapshot.ready();
   });
   afterEach(mm.restore);
-  after(async () => { await rimraf(cacheDir); });
+  afterAll(async () => { await rimraf(cacheDir); });
 
   describe('save()', () => {
     it('should get/save snapshot ok', async () => {

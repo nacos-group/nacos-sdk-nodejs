@@ -56,7 +56,7 @@ describe('test/client_worker.test.ts', () => {
 
     let client: ClientWorker;
 
-    before(async () => {
+    beforeAll(async () => {
       client = getClient(configuration);
       await client.publishSingle('com.taobao.hsf.redis', 'DEFAULT_GROUP', '10.123.32.1:8080');
       await sleep(1000);
@@ -64,7 +64,7 @@ describe('test/client_worker.test.ts', () => {
     });
     afterEach(mm.restore);
 
-    after(async () => {
+    afterAll(async () => {
       client.close();
       await client.remove('com.taobao.hsf.redis', 'DEFAULT_GROUP');
       await client.remove('test-dataId-encoding', 'test-group');
@@ -214,7 +214,7 @@ describe('test/client_worker.test.ts', () => {
     });
 
     let client: ClientWorker;
-    before(async () => {
+    beforeAll(async () => {
       client = getClient(configuration);
       await client.publishSingle('com.taobao.hsf.redis', 'DEFAULT_GROUP', '10.123.32.1:8080');
       await sleep(1000);
@@ -222,7 +222,7 @@ describe('test/client_worker.test.ts', () => {
     });
     afterEach(mm.restore);
 
-    after(async () => {
+    afterAll(async () => {
       client.close();
       await client.remove('com.taobao.hsf.redis', 'DEFAULT_GROUP');
       await rimraf(cacheDir);
@@ -334,13 +334,13 @@ describe('test/client_worker.test.ts', () => {
     });
 
     describe('mock error', () => {
-      before(async () => {
+      beforeAll(async () => {
         client = getClient(configuration);
         await client.ready();
       });
       afterEach(mm.restore);
 
-      after(async () => {
+      afterAll(async () => {
         client.close();
         await rimraf(cacheDir);
       });
