@@ -1,0 +1,38 @@
+name: Node.js CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [10.x, 12.x, 14.x, 16.x]
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up JDK 1.8
+      uses: joschi/setup-jdk@v2
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v1
+      with:
+        node-version: ${{ matrix.node-version }}
+    - run: echo $JAVA_HOME
+    - run: java -version
+    - run: wget https://github.com/alibaba/nacos/releases/download/1.0.0/nacos-server-1.0.0.tar.gz
+    - run: wget https://github.com/gxcsoccer/PDisk/releases/download/1.0.1/startup.sh
+    - run: tar xf nacos-server-1.0.0.tar.gz
+    - run: mv ./startup.sh ./nacos/bin/startup.sh
+    - run: chmod 755 ./nacos/bin/startup.sh'
+    - run: 'nohup ./nacos/bin/startup.sh -m standalone 2>&1 &'
+    - run: sleep 30
+    - run: cat nohup.out
+    - run: curl "127.0.0.1:8848/nacos/v1/ns/operator/metrics"
+    - run: npm install && npm install codecov
+    - run: npm run bootstrap
+    - run: npm run build --if-present
+    - run: npm run ci
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v1
