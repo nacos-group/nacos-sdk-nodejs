@@ -9,7 +9,7 @@
     "release": "rm -f ./packages/.DS*; sh scripts/publish.sh",
     "next": "sh scripts/publish.sh --npm-tag next",
     "test": "lerna run test",
-    "cov": "lerna run cov --concurrency=2 --stream",
+    "cov": "lerna run cov --concurrency=1 --stream",
     "ci": "npm run cov",
     "build": "lerna run build && cp ./README.md ./packages/nacos/README.md",
     "lint": "lerna exec mwts check",
