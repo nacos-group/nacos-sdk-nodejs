@@ -189,7 +189,7 @@ describe('test/server_list_mgr.test.ts', () => {
     beforeAll(async () => {
       const configuration = createDefaultConfiguration({
         httpclient,
-        serverAddr: '106.14.43.196:8848',
+        serverAddr: '127.0.0.1:8848',
         cacheDir,
       });
       serverManager = new ServerListManager({ configuration });

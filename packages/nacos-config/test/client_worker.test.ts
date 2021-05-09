@@ -39,7 +39,7 @@ describe('test/client_worker.test.ts', () => {
   describe('test features in direct mode', () => {
 
     const defaultOptions = {
-      serverAddr: '106.14.43.196:8848',
+      serverAddr: '127.0.0.1:8848',
       namespace: '',
       cacheDir
     };
