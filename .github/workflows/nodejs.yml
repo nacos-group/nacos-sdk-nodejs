@@ -27,7 +27,7 @@ jobs:
     - run: wget https://github.com/gxcsoccer/PDisk/releases/download/1.0.1/startup.sh
     - run: tar xf nacos-server-1.0.0.tar.gz
     - run: mv ./startup.sh ./nacos/bin/startup.sh
-    - run: chmod 755 ./nacos/bin/startup.sh'
+    - run: chmod 755 ./nacos/bin/startup.sh
     - run: 'nohup ./nacos/bin/startup.sh -m standalone 2>&1 &'
     - run: sleep 30
     - run: cat nohup.out
