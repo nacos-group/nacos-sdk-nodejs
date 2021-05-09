@@ -19,7 +19,7 @@ import { Configuration } from '../src/configuration';
 import { DEFAULT_OPTIONS } from '../src/const';
 
 export function delay(timeout) {
-  return new Promise(resolve => {
+  return new Promise<void>(resolve => {
     setTimeout(() => {
       resolve();
     }, timeout);
