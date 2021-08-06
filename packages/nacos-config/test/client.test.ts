@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 import { DataClient } from '../src/client';
+import { HttpAgent } from '../src/http_agent'
 
 const mm = require('mm');
 const assert = require('assert');
@@ -115,6 +116,22 @@ describe('test/client.test.ts', () => {
         assert(err.message.indexOf('only allow digital, letter and symbols in [ "_", "-", ".", ":" ]') > -1);
       }
     });
+  });
+
+  it('support custom httpAgent', () => {
+    class CustomHttpAgent {};
+    assert(client.httpAgent instanceof HttpAgent);
+    client = new DataClient({
+      appName: 'test',
+      endpoint: 'acm.aliyun.com',
+      namespace: '81597370-5076-4216-9df5-538a2b55bac3',
+      accessKey: '4c796a4dcd0d4f5895d4ba83a296b489',
+      secretKey: 'UjLemP8inirhjMg1NZyY0faOk1E=',
+      httpclient,
+      httpAgent: CustomHttpAgent,
+      ssl: false
+    });
+    assert(client.httpAgent instanceof CustomHttpAgent);
   });
 
 });
