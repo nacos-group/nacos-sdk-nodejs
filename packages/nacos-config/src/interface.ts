@@ -251,6 +251,7 @@ export interface ClientOptions {
   accessKey?: string;         // 阿里云的 accessKey
   secretKey?: string;         // 阿里云的 secretKey
   httpclient?: any;           // http 请求客户端，默认为 urllib
+  httpAgent?: any;            // httpAgent
   appName?: string;           // 应用名，可选
   ssl?: boolean;              // 是否为 https 请求
   refreshInterval?: number;   // 重新拉去地址列表的间隔时间
