@@ -43,14 +43,14 @@ describe('test/server_list_mgr.test.ts', () => {
 
     const configuration = createDefaultConfiguration(defaultOptions);
 
-    before(async () => {
+    beforeAll(async () => {
       serverManager = new ServerListManager({ configuration });
       await serverManager.ready();
     });
 
     afterEach(mm.restore);
 
-    after(async () => {
+    afterAll(async () => {
       serverManager.close();
       await rimraf(cacheDir);
       await sleep(4000);
@@ -186,10 +186,10 @@ describe('test/server_list_mgr.test.ts', () => {
   describe('use ip and direct mode', () => {
     let serverManager: ServerListManager;
 
-    before(async () => {
+    beforeAll(async () => {
       const configuration = createDefaultConfiguration({
         httpclient,
-        serverAddr: '106.14.43.196:8848',
+        serverAddr: '127.0.0.1:8848',
         cacheDir,
       });
       serverManager = new ServerListManager({ configuration });
@@ -198,7 +198,7 @@ describe('test/server_list_mgr.test.ts', () => {
 
     afterEach(mm.restore);
 
-    after(async () => {
+    afterAll(async () => {
       serverManager.close();
       await rimraf(cacheDir);
       await sleep(4000);

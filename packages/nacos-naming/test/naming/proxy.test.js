@@ -200,14 +200,14 @@ describe('test/naming/proxy.test.js', () => {
 
   describe('endpoint', () => {
     let server;
-    before(done => {
+    beforeAll(done => {
       server = http.createServer((req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/text' });
         res.end('127.0.0.1:8848');
       });
       server.listen(8849, done);
     });
-    after(done => {
+    afterAll(done => {
       server.once('close', done);
       server.close();
     });

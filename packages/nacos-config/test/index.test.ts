@@ -24,7 +24,7 @@ import {NacosConfigClient} from '../src';
 
 describe('test/index.test.ts', () => {
   let client;
-  before(async () => {
+  beforeAll(async () => {
     client = new NacosConfigClient({
       endpoint: 'acm.aliyun.com',
       namespace: '81597370-5076-4216-9df5-538a2b55bac3',
@@ -35,7 +35,7 @@ describe('test/index.test.ts', () => {
     });
     await client.ready();
   });
-  after(() => {
+  afterAll(() => {
     client.close();
   });
   afterEach(mm.restore);

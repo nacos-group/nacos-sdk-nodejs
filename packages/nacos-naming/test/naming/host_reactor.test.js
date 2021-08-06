@@ -30,14 +30,14 @@ const serviceNameWithGroup = groupName + '@@' + serviceName;
 
 describe('test/naming/host_reactor.test.js', () => {
   let serverProxy;
-  before(async () => {
+  beforeAll(async () => {
     serverProxy = new NameProxy({
       logger,
       serverList: '127.0.0.1:8848',
     });
     await serverProxy.ready();
   });
-  after(async () => {
+  afterAll(async () => {
     await serverProxy.close();
   });
   afterEach(mm.restore);

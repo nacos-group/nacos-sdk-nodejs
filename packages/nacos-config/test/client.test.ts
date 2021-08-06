@@ -25,7 +25,7 @@ const { sleep } = require('mz-modules');
 
 describe('test/client.test.ts', () => {
   let client;
-  before(async () => {
+  beforeAll(async () => {
     client = new DataClient({
       appName: 'test',
       endpoint: 'acm.aliyun.com',
@@ -36,7 +36,7 @@ describe('test/client.test.ts', () => {
       ssl: false
     });
   });
-  after(() => {
+  afterAll(() => {
     client.close();
   });
   afterEach(mm.restore);

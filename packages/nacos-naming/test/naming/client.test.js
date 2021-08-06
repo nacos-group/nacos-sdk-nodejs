@@ -28,7 +28,7 @@ const serviceName = 'nodejs.test.' + process.versions.node;
 
 describe('test/naming/client.test.js', () => {
   let client;
-  before(async function() {
+  beforeAll(async function() {
     client = new NacosNamingClient({
       logger,
       serverList: '127.0.0.1:8848',
@@ -36,7 +36,7 @@ describe('test/naming/client.test.js', () => {
     await client.ready();
   });
   afterEach(mm.restore);
-  after(async () => {
+  afterAll(async () => {
     await client.close();
   });
 
