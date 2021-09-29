@@ -265,6 +265,7 @@ export interface ClientOptions {
   cacheDir?: string;          // 缓存文件的路径
   identityKey?: string;       // Identity Key
   identityValue?: string;     // Identity Value
+  decodeRes?: (res: any, method?: string, encoding?: string) => any
 }
 
 export enum ClientOptionKeys {
@@ -290,6 +291,7 @@ export enum ClientOptionKeys {
   DEFAULT_ENCODING = 'defaultEncoding',
   IDENTITY_KEY = 'identityKey',
   IDENTITY_VALUE = 'identityValue',
+  DECODE_RES = 'decodeRes',
 }
 
 export interface IConfiguration {

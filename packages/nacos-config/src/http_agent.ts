@@ -90,6 +90,10 @@ export class HttpAgent {
     return this.configuration.get(ClientOptionKeys.IDENTITY_VALUE);
   }
 
+  get decodeRes() {
+    return this.configuration.get(ClientOptionKeys.DECODE_RES);
+  }
+
 
   /**
    * 请求
@@ -166,6 +170,9 @@ export class HttpAgent {
         this.debug('%s %s, got %s, body: %j', method, url, res.status, res.data);
         switch (res.status) {
           case HTTP_OK:
+            if (this.decodeRes) {
+              return this.decodeRes(res, method, this.defaultEncoding)
+            }
             return this.decodeResData(res, method);
           case HTTP_NOT_FOUND:
             return null;
