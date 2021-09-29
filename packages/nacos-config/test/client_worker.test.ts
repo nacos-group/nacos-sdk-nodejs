@@ -497,5 +497,32 @@ describe('test/client_worker.test.ts', () => {
         assert(error && error.name === 'NacosServerConflictError');
       });
     });
+
+    describe('custom decode res data', () => {
+      before(async () => {
+        configuration.merge({ decodeRes(res) {
+          if (/^\d+\.\d+\.\d+\.\d+\:\d+$/.test(res.data)) {
+            return 'customDecode' + res.data
+          }
+          return res.data;
+        }});
+        client = getClient(configuration);
+        await client.publishSingle('com.taobao.hsf.redis', 'DEFAULT_GROUP', '10.123.32.1:8080');
+        await sleep(1000);
+        await client.ready();
+      });
+      afterEach(mm.restore);
+  
+      after(async () => {
+        client.close();
+        await client.remove('com.taobao.hsf.redis', 'DEFAULT_GROUP');
+        await rimraf(cacheDir);
+      });
+
+      it('should be handled by decodeRes', async () => {
+        const content = await client.getConfig('com.taobao.hsf.redis', 'DEFAULT_GROUP');
+        assert(/^customDecode\d+\.\d+\.\d+\.\d+\:\d+$/.test(content));
+      });
+    })
   });
 });
