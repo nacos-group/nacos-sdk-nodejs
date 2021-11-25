@@ -217,6 +217,10 @@ export class ClientWorker extends Base implements IClientWorker {
     }
 
     const postData = {};
+    // 开启权限验证后需要携带租户，否则没有权限
+    if (tenant) {
+      Object.assign(postData, { tenant })
+    }
     postData[ this.listenerDataKey ] = probeUpdate.join('');
     const content = await this.httpAgent.request(this.apiRoutePath.LISTENER, {
       method: 'POST',
