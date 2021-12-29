@@ -160,6 +160,10 @@ class NameProxy extends Base {
     }
 
     const url = (this.options.ssl ? 'https://' : 'http://') + serverAddr + api;
+    if (this.options.username && this.options.password) {
+      params.username = this.options.username;
+      params.password = this.options.password;
+    }
     const result = await this.httpclient.request(url, {
       method,
       headers,
@@ -284,7 +288,7 @@ class NameProxy extends Base {
       err.message = `[CLIENT-BEAT] failed to send beat: ${JSON.stringify(beatInfo)}, caused by ${err.message}`;
       this.logger.error(err);
     }
-    return 0;
+    return Constants.DEFAULT_DELAY;
   }
 
   async getServiceList(pageNo, pageSize, groupName) {

@@ -82,6 +82,18 @@ export class HttpAgent {
     return this.configuration.get(ClientOptionKeys.DEFAULT_ENCODING) || 'utf8';
   }
 
+  get identityKey() {
+    return this.configuration.get(ClientOptionKeys.IDENTITY_KEY);
+  }
+
+  get identityValue() {
+    return this.configuration.get(ClientOptionKeys.IDENTITY_VALUE);
+  }
+
+  get decodeRes() {
+    return this.configuration.get(ClientOptionKeys.DECODE_RES);
+  }
+
 
   /**
    * 请求
@@ -106,6 +118,11 @@ export class HttpAgent {
     const endTime = Date.now() + timeout;
     let lastErr;
 
+    if (this.options?.configuration?.innerConfig?.username &&
+        this.options?.configuration?.innerConfig?.password) {
+      data.username = this.options.configuration.innerConfig.username;
+      data.password = this.options.configuration.innerConfig.password;
+    }
     let signStr = data.tenant;
     if (data.group && data.tenant) {
       signStr = data.tenant + '+' + data.group;
@@ -125,6 +142,7 @@ export class HttpAgent {
       timeStamp: ts,
       exConfigInfo: 'true',
       'Spas-Signature': signature,
+      ...this.identityKey ? {[this.identityKey]: this.identityValue} : {}
     });
 
     let requestData = data;
@@ -152,6 +170,9 @@ export class HttpAgent {
         this.debug('%s %s, got %s, body: %j', method, url, res.status, res.data);
         switch (res.status) {
           case HTTP_OK:
+            if (this.decodeRes) {
+              return this.decodeRes(res, method, this.defaultEncoding)
+            }
             return this.decodeResData(res, method);
           case HTTP_NOT_FOUND:
             return null;

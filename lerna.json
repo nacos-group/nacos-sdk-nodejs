@@ -2,5 +2,19 @@
   "packages": [
     "packages/*"
   ],
-  "version": "2.0.0"
+  "command": {
+    "bootstrap": {
+      "hoist": true,
+      "noCi": true,
+      "npmClientArgs": [
+        "--no-package-lock"
+      ]
+    },
+    "publish": {
+      "ignoreChanges": [
+        "*.md"
+      ]
+    }
+  },
+  "version": "2.2.1"
 }

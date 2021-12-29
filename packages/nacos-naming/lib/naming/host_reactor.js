@@ -133,7 +133,6 @@ class HostReactor extends Base {
       this.emit(`${serviceInfo.getKey()}_changed`, serviceInfo.hosts, serviceInfo);
       // TODO: 本地缓存
     }
-    this.logger.info('[HostReactor] current ips(%d) service: %s -> %s', serviceInfo.ipCount, serviceInfo.name, JSON.stringify(serviceInfo.hosts));
     return serviceInfo;
   }
 
@@ -257,7 +256,7 @@ class HostReactor extends Base {
 
     if (this._futureMap.has(key)) {
       const serviceInfo = this._serviceInfoMap.get(key);
-      let delay = 1000;
+      let delay = Constants.DEFAULT_DELAY;
       if (serviceInfo) {
         delay = serviceInfo.cacheMillis;
         task.lastRefTime = serviceInfo.lastRefTime;

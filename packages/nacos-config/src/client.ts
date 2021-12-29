@@ -54,7 +54,8 @@ export class DataClient extends Base implements BaseClient {
 
     this.snapshot = this.getSnapshot();
     this.serverMgr = this.getServerListManager();
-    this.httpAgent = new HttpAgent({ configuration: this.configuration });
+    const CustomHttpAgent = this.configuration.get(ClientOptionKeys.HTTP_AGENT);
+    this.httpAgent = CustomHttpAgent ? new CustomHttpAgent({ configuration: this.configuration }) : new HttpAgent({ configuration: this.configuration });
 
     this.configuration.merge({
       snapshot: this.snapshot,

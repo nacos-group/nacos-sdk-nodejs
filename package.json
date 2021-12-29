@@ -6,7 +6,7 @@
     "contributors": "contributors -f plain -o AUTHORS",
     "clean": "lerna clean --yes; rm -rf ./packages/**/package-lock.json",
     "bootstrap": "rm -f ./packages/.DS*; lerna bootstrap --no-ci",
-    "publish": "rm -f ./packages/.DS*; sh scripts/publish.sh",
+    "release": "rm -f ./packages/.DS*; sh scripts/publish.sh",
     "next": "sh scripts/publish.sh --npm-tag next",
     "test": "lerna run test",
     "cov": "sh scripts/cov.sh",

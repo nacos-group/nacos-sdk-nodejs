@@ -104,7 +104,13 @@ class PushReceiver extends Base {
   }
 
   close() {
-    this._isClosed = true;
+    return new Promise((resolve) => {
+      this._isClosed = true;
+      if (this._server) {
+        this._server.close(resolve)
+        this._server = null;
+      }
+    });
   }
 }
 

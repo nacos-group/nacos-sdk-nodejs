@@ -251,6 +251,7 @@ export interface ClientOptions {
   accessKey?: string;         // 阿里云的 accessKey
   secretKey?: string;         // 阿里云的 secretKey
   httpclient?: any;           // http 请求客户端，默认为 urllib
+  httpAgent?: any;            // httpAgent
   appName?: string;           // 应用名，可选
   ssl?: boolean;              // 是否为 https 请求
   refreshInterval?: number;   // 重新拉去地址列表的间隔时间
@@ -262,6 +263,9 @@ export interface ClientOptions {
   unit?: string;              // 内部单元化用
   nameServerAddr?: string;    // 老的兼容参数，逐步废弃，同 endpoint
   cacheDir?: string;          // 缓存文件的路径
+  identityKey?: string;       // Identity Key
+  identityValue?: string;     // Identity Value
+  decodeRes?: (res: any, method?: string, encoding?: string) => any
 }
 
 export enum ClientOptionKeys {
@@ -285,6 +289,9 @@ export enum ClientOptionKeys {
   HTTP_AGENT = 'httpAgent',
   SERVER_MGR = 'serverMgr',
   DEFAULT_ENCODING = 'defaultEncoding',
+  IDENTITY_KEY = 'identityKey',
+  IDENTITY_VALUE = 'identityValue',
+  DECODE_RES = 'decodeRes',
 }
 
 export interface IConfiguration {

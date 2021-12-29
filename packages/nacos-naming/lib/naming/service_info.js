@@ -17,6 +17,7 @@
 
 'use strict';
 
+const Constants = require('../const');
 const EMPTY = '';
 const SPLITER = '@@';
 // const ALL_IPS = '000--00-ALL_IPS--00--000';
@@ -27,7 +28,7 @@ class ServiceInfo {
     this.groupName = data.groupName;
     this.clusters = data.clusters;
     this.isAllIPs = data.allIPs || false;
-    this.cacheMillis = data.cacheMillis || 1000;
+    this.cacheMillis = data.cacheMillis || Constants.DEFAULT_DELAY;
     this.hosts = data.hosts;
     this.lastRefTime = data.lastRefTime || 0;
     this.checksum = data.checksum || '';
