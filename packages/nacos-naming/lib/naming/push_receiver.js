@@ -66,7 +66,7 @@ class PushReceiver extends Base {
     });
     this._server.on('message', (msg, rinfo) => this._handlePushMessage(msg, rinfo));
     // 随机绑定一个端口
-    this._server.bind();
+    this._server.bind({port: 0, exclusive: true}, null);
   }
 
   _handlePushMessage(msg, rinfo) {
