@@ -254,7 +254,7 @@ export interface ClientOptions {
   httpAgent?: any;            // httpAgent
   appName?: string;           // 应用名，可选
   ssl?: boolean;              // 是否为 https 请求
-  refreshInterval?: number;   // 重新拉去地址列表的间隔时间
+  refreshInterval?: number;   // 重新拉取地址列表的间隔时间
   contextPath?: string;       // 请求的 contextPath
   clusterName?: string;       // 请求的 path
   requestTimeout?: number;    // 请求超时时间
