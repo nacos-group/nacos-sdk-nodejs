@@ -163,7 +163,7 @@ export class DataClient extends Base implements BaseClient {
   async publishSingle(dataId, group, content, options) {
     checkParameters(dataId, group);
     const client = this.getClient(options);
-    return await client.publishSingle(dataId, group, content);
+    return await client.publishSingle(dataId, group, content, options.type);
   }
 
   /**
