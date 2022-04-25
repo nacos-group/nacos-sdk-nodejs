@@ -265,6 +265,7 @@ export interface ClientOptions {
   cacheDir?: string;          // 缓存文件的路径
   identityKey?: string;       // Identity Key
   identityValue?: string;     // Identity Value
+  endpointQueryParams?: string; // endPoint 查询参数 e.g: param_1=1&param_2=2
   decodeRes?: (res: any, method?: string, encoding?: string) => any
 }
 
@@ -292,6 +293,7 @@ export enum ClientOptionKeys {
   IDENTITY_KEY = 'identityKey',
   IDENTITY_VALUE = 'identityValue',
   DECODE_RES = 'decodeRes',
+  ENDPOINT_QUERY_PARAMS = 'endpointQueryParams'
 }
 
 export interface IConfiguration {

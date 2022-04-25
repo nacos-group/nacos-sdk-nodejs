@@ -108,6 +108,10 @@ export class ServerListManager extends Base implements IServerListManager {
     return this.configuration.get(ClientOptionKeys.CLUSTER_NAME) || 'serverlist';
   }
 
+  get endpointQueryParams() {
+    return this.configuration.get(ClientOptionKeys.ENDPOINT_QUERY_PARAMS)
+  }
+
   get requestTimeout(): number {
     return this.configuration.get(ClientOptionKeys.REQUEST_TIMEOUT);
   }
@@ -226,7 +230,8 @@ export class ServerListManager extends Base implements IServerListManager {
 
   // 获取请求 url
   protected getRequestUrl(unit) {
-    return `http://${this.nameServerAddr}/${this.contextPath}/${this.clusterName}`;
+    const endpointQueryParams = !!this.endpointQueryParams ? `?${this.endpointQueryParams}` : '';
+    return `http://${this.nameServerAddr}/${this.contextPath}/${this.clusterName}${endpointQueryParams}`;
   }
 
   /**

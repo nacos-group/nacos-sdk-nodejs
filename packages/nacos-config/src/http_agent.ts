@@ -90,6 +90,10 @@ export class HttpAgent {
     return this.configuration.get(ClientOptionKeys.IDENTITY_VALUE);
   }
 
+  get endpointQueryParams() {
+    return this.configuration.get(ClientOptionKeys.ENDPOINT_QUERY_PARAMS)
+  }
+
   get decodeRes() {
     return this.configuration.get(ClientOptionKeys.DECODE_RES);
   }
