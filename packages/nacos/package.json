@@ -1,6 +1,6 @@
 {
   "name": "nacos",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "nacos client main package",
   "keywords": [
     "nacos",
@@ -13,7 +13,7 @@
   "author": "czy88840616@gmail.com",
   "dependencies": {
     "nacos-config": "^2.3.0",
-    "nacos-naming": "^2.3.0"
+    "nacos-naming": "^2.3.1"
   },
   "devDependencies": {
     "@types/mocha": "^5.2.5",
