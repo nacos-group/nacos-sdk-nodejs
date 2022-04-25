@@ -1,6 +1,6 @@
 {
   "name": "nacos-naming",
-  "version": "2.1.1",
+  "version": "2.3.0",
   "description": "nacos (https://nacos.io/en-us/) nodejs sdk",
   "main": "index.js",
   "files": [
