@@ -361,7 +361,8 @@ export class ClientWorker extends Base implements IClientWorker {
         group,
         content,
         tenant: this.namespace,
-        type
+        type,
+        appName: this.appName
       },
     });
     return true;
