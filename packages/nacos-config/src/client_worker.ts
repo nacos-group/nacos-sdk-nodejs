@@ -361,7 +361,11 @@ export class ClientWorker extends Base implements IClientWorker {
         group,
         content,
         tenant: this.namespace,
+<<<<<<< Updated upstream
         type
+=======
+        appName: this.appName
+>>>>>>> Stashed changes
       },
     });
     return true;
