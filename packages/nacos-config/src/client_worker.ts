@@ -349,9 +349,10 @@ export class ClientWorker extends Base implements IClientWorker {
    * @param {String} dataId - id of the data
    * @param {String} group - group name of the data
    * @param {String} content - config value
+   * @param {String} type - type of the data
    * @return {Boolean} success
    */
-  async publishSingle(dataId, group, content) {
+  async publishSingle(dataId, group, content, type) {
     await this.httpAgent.request(this.apiRoutePath.PUBLISH, {
       method: 'POST',
       encode: true,
@@ -360,6 +361,7 @@ export class ClientWorker extends Base implements IClientWorker {
         group,
         content,
         tenant: this.namespace,
+        type
       },
     });
     return true;
