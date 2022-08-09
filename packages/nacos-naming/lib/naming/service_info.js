@@ -40,7 +40,12 @@ class ServiceInfo {
   }
 
   get isValid() {
-    return !!this.hosts;
+    const valid = !!this.hosts;
+    // 如果 this.hosts 是空数组要返回 false
+    if (valid && Array.isArray(this.hosts)) {
+      return this.hosts.length > 0;
+    }
+    return valid;
   }
 
   getKey() {
