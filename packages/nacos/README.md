@@ -177,6 +177,10 @@ Please let us know how can we help. Do check out [issues](https://github.com/nac
 
 PR is welcome.
 
+nacos-sdk-nodejs ding group ： 44654232
+![image](https://user-images.githubusercontent.com/17695352/172582005-c661e2a0-49fa-425c-bf99-785bb7cd4dc1.png)
+
+
 ## License
 
 [Apache License V2](LICENSE)
