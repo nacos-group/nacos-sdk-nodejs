@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "address": "^1.1.0",
+    "equals": "^1.0.5",
     "mz-modules": "^2.1.0",
     "sdk-base": "^3.6.0",
     "urllib": "^2.33.3",
