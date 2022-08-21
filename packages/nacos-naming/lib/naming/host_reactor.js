@@ -22,6 +22,7 @@ const Base = require('sdk-base');
 const Constants = require('../const');
 const ServiceInfo = require('./service_info');
 const PushReceiver = require('./push_receiver');
+const equals = require('equals');
 
 class HostReactor extends Base {
   constructor(options = {}) {
@@ -92,7 +93,7 @@ class HostReactor extends Base {
         const key = host.ip + ':' + host.port;
         newHostMap.set(key, host);
 
-        if (oldHostMap.has(key) && JSON.stringify(host) !== JSON.stringify(oldHostMap.get(key))) {
+        if (oldHostMap.has(key) && !equals(host, oldHostMap.get(key))) {
           modHosts.push(host);
           continue;
         }
