@@ -19,6 +19,7 @@ import { ClientOptionKeys, IConfiguration, IServerListManager } from './interfac
 import * as urllib from 'urllib';
 import * as crypto from 'crypto';
 import { encodingParams, transformGBKToUTF8 } from './utils';
+import * as dns from 'dns';
 
 export class HttpAgent {
 
@@ -195,6 +196,9 @@ export class HttpAgent {
             break;
         }
       } catch (err) {
+        if (err.code === dns.NOTFOUND) {
+          throw err;
+        }
         err.url = `${method} ${url}`;
         err.data = data;
         err.headers = headers;
