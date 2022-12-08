@@ -1,6 +1,6 @@
 {
   "name": "nacos",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "nacos client main package",
   "keywords": [
     "nacos",
@@ -12,7 +12,7 @@
   "main": "dist/index.js",
   "author": "czy88840616@gmail.com",
   "dependencies": {
-    "nacos-config": "^2.4.1",
+    "nacos-config": "^2.5.1",
     "nacos-naming": "^2.5.0"
   },
   "devDependencies": {
