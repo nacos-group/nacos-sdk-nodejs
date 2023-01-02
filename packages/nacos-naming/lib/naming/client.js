@@ -80,7 +80,7 @@ class NacosNamingClient extends Base {
     }
     const serviceNameWithGroup = utils.getGroupedName(serviceName, groupName);
     this._beatReactor.removeBeatInfo(serviceNameWithGroup, instance.ip, instance.port);
-    await this._serverProxy.deregisterService(serviceName, instance);
+    await this._serverProxy.deregisterService(serviceNameWithGroup, instance);
   }
 
   async getAllInstances(serviceName, groupName = Constants.DEFAULT_GROUP, clusters = '', subscribe = true) {
