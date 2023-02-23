@@ -3,14 +3,18 @@
  * Create Time: 2021/8/20 9:12
  */
 interface Instance {
+  instanceId: string,
   ip: string,                                         //IP of instance
   port: number,                                       //Port of instance
+  healthy: boolean,
+  enabled: boolean,
+  serviceName?: string,
   weight?: number,
   ephemeral?: boolean,
   clusterName?: string
 }
 
-type Hosts = string[];
+type Hosts = Instance[];
 
 interface SubscribeInfo {
   serviceName: string,
@@ -18,11 +22,22 @@ interface SubscribeInfo {
   clusters?: string
 }
 
+interface NacosNamingClientConfig {
+  logger: typeof console,
+  serverList: string | string[],
+  namespace?: string,
+  username?: string,
+  password?: string,
+  endpoint?: string,
+  vipSrvRefInterMillis?: number,
+  ssl?: boolean
+}
+
 /**
  * Nacos服务发现组件
  */
 export class NacosNamingClient {
-  constructor (config: { logger: typeof console, serverList: string | string[], namespace?: string })
+  constructor (config: NacosNamingClientConfig);
 
   ready: () => Promise<void>;
   // Register an instance to service
@@ -43,6 +58,14 @@ export class NacosNamingClient {
     groupName?: string,                               //group name, default is DEFAULT_GROUP
     clusters?: string,                                //Cluster names
     subscribe?: boolean                               //whether subscribe the service, default is true
+  ) => Promise<Hosts>;
+  // Select instance list of service.
+  selectInstances: (
+    serviceName: string, 
+    groupName?: string,
+    clusters?: string,
+    healthy?: boolean,
+    subscribe?: boolean
   ) => Promise<Hosts>;
   //  Get the status of nacos server, 'UP' or 'DOWN'.
   getServerStatus: () => 'UP' | 'DOWN';
