@@ -295,7 +295,7 @@ export class ClientWorker extends Base implements IClientWorker {
   }
 
   private formatKey(info) {
-    return `${info.dataId}@${info.group}@${this.unit}`;
+    return `${info.dataId}@${info.group}@${this.namespace}@${this.unit}`;
   }
 
   private getSnapshotKey(dataId, group, tenant?) {
