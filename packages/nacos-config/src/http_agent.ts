@@ -142,7 +142,7 @@ export class HttpAgent {
     // 携带统一的头部信息
     Object.assign(headers, {
       'Client-Version': VERSION,
-      'Content-Type': 'application/x-www-form-urlencoded; charset=GBK',
+      'Content-Type': 'application/x-www-form-urlencoded; charset=utf8',
       'Spas-AccessKey': this.accessKey,
       timeStamp: ts,
       exConfigInfo: 'true',
