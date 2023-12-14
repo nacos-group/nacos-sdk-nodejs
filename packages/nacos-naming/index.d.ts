@@ -14,7 +14,24 @@ interface Instance {
   clusterName?: string
 }
 
-type Hosts = Instance[];
+export interface Host {
+  instanceId: string;
+  ip: string;
+  port: number;
+  weight: number;
+  healthy: boolean;
+  enabled: boolean;
+  ephemeral: boolean;
+  clusterName: string;
+  serviceName: string;
+  metadata: any;
+  instanceHeartBeatInterval: number;
+  instanceIdGenerator: string;
+  instanceHeartBeatTimeOut: number;
+  ipDeleteTimeout: number;
+}
+
+type Hosts = Host[];
 
 interface SubscribeInfo {
   serviceName: string,
