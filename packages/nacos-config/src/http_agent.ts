@@ -72,7 +72,7 @@ export class HttpAgent {
   }
 
   get contextPath() {
-    return this.configuration.get(ClientOptionKeys.CONTEXTPATH) || 'nacos';
+    return this.configuration.get(ClientOptionKeys.CONTEXTPATH) || '';
   }
 
   get clusterName() {
@@ -224,7 +224,7 @@ export class HttpAgent {
         url = `https://${currentServer}:${this.serverPort}`;
       }
     }
-    return `${url}/${this.contextPath}`;
+    return `${url}${this.contextPath ? `/${this.contextPath}` : ''}`;
   }
 
   decodeResData(res, method = 'GET') {
