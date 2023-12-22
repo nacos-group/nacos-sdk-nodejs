@@ -103,8 +103,8 @@ export class NacosConfigClient extends APIClientBase implements BaseClient {
    * 查询租户下的所有的配置
    * @return {Array} config
    */
-  async getConfigs() {
-    return await this._client.getConfigs();
+  async getConfigs(appName) {
+    return await this._client.getConfigs(appName);
   }
 
   /**

@@ -298,8 +298,11 @@ export class ClientWorker extends Base implements IClientWorker {
     return `${info.dataId}@${info.group}@${this.unit}`;
   }
 
-  private getSnapshotKey(dataId, group, tenant?) {
+  private getSnapshotKey(dataId, group, tenant?, appName?) {
     tenant = tenant || this.namespace || 'default_tenant';
+    if (appName) {
+      return path.join('config', this.unit, tenant, group, dataId, appName);
+    }
     return path.join('config', this.unit, tenant, group, dataId);
   }
 
@@ -340,8 +343,58 @@ export class ClientWorker extends Base implements IClientWorker {
    * 查询租户下的所有的配置
    * @return {Array} config
    */
-  async getConfigs() {
-    return null;
+  async getConfigs(appName: string): Promise<any[]> {
+    this.debug('calling getConfigs, appName %s', appName);
+
+    appName = appName || this.options.configuration.innerConfig.appName;
+
+    const extractPageItems = (reply) => {
+      return Array.isArray(reply.pageItems)
+          ? reply.pageItems.map(x => {
+              return {
+                dataId: x.dataId,
+                content: x.content,
+              }
+            })
+          : [];
+    };
+
+    const JSONParseSafe = (str, defaultValue = {}) => {
+      try {
+        return JSON.parse(str);
+      } catch (e) {
+        return Object.assign({}, defaultValue)
+      }
+    };
+
+    let content;
+    const key = this.getSnapshotKey("", "", null, appName);
+    // TODO 优先使用本地配置
+    try {
+      content = await this.httpAgent.request(this.apiRoutePath.GET, {
+        data: {
+          dataId: "",
+          group: "",
+          appName,
+          tenant: this.namespace,
+          search: "accurate",
+          pageNo: 1,
+          pageSize: 200
+        },
+      });
+    }
+    catch (err) {
+      const cache = await this.snapshot.get(key);
+      if (cache) {
+        this._error(err);
+        content = JSONParseSafe(cache);
+        return extractPageItems(content);
+      }
+      throw err;
+    }
+    await this.snapshot.save(key, content);
+    content = JSONParseSafe(content);
+    return extractPageItems(content);
   }
 
   /**
