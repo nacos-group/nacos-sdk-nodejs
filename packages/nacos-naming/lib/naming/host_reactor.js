@@ -24,6 +24,23 @@ const ServiceInfo = require('./service_info');
 const PushReceiver = require('./push_receiver');
 const equals = require('equals');
 
+// Helper function to wait for an event
+function waitForEvent(emitter, eventName, timeout = 30000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      emitter.removeListener(eventName, handler);
+      reject(new Error(`Timeout waiting for event ${eventName}`));
+    }, timeout);
+
+    function handler(data) {
+      clearTimeout(timer);
+      resolve(data);
+    }
+
+    emitter.once(eventName, handler);
+  });
+}
+
 class HostReactor extends Base {
   constructor(options = {}) {
     assert(options.logger, '[HostReactor] options.logger is required');
@@ -187,8 +204,8 @@ class HostReactor extends Base {
       await this.updateServiceNow(serviceName, clusters);
       this._updatingSet.delete(key);
     } else if (this._updatingSet.has(key)) {
-      // await updating
-      await this.await(`${key}_changed`);
+      // wait for updating to complete
+      await waitForEvent(this, `${key}_changed`);
     }
     this._scheduleUpdateIfAbsent(serviceName, clusters);
     return this._serviceInfoMap.get(key);
