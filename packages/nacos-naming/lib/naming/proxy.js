@@ -27,7 +27,7 @@ const localIp = require('address').ip();
 const sleep = require('mz-modules/sleep');
 
 const defaultOptions = {
-  namespace: 'default',
+  namespace: 'public',
   httpclient: require('urllib'),
   ssl: false,
   ak: null,

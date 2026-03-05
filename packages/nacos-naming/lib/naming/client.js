@@ -27,7 +27,7 @@ const HostReactor = require('./host_reactor');
 const Constants = require('../const');
 
 const defaultOptions = {
-  namespace: 'default',
+  namespace: 'public',
 };
 
 class NacosNamingClient extends Base {
