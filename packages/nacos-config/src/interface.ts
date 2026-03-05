@@ -119,6 +119,7 @@ export interface IClientWorker {
    * @param {Object} [options]
    *  - {String} unit
    * @returns {Promise<boolean>} true | false
+   * @deprecated This API is not implemented and will be removed in a future version
    */
   publishAggr(dataId: string, group: string, datumId: string, content: string, options?: UnitOptions): Promise<boolean>;
 
@@ -130,6 +131,7 @@ export interface IClientWorker {
    * @param {Object} [options]
    *  - {String} unit
    * @returns {Promise<boolean>} true | false
+   * @deprecated This API is not implemented and will be removed in a future version
    */
   removeAggr(dataId: string, group: string, datumId: string, options?: UnitOptions): Promise<boolean>;
 
@@ -140,6 +142,9 @@ export interface IClientWorker {
    * @param {Object} [options]
    *   - {String} unit - which unit you want to connect, default is current unit
    * @returns {Promise<object>} result
+   * @deprecated This API is not implemented and will be removed in a future version.
+   * Nacos server does not support batch configuration retrieval operations.
+   * Please use individual getConfig() calls instead.
    */
   batchGetConfig(dataIds: string[], group: string, options?: UnitOptions): Promise<object>;
 
@@ -150,6 +155,9 @@ export interface IClientWorker {
    * @param {Object} [options]
    *   - {String} unit - which unit you want to connect, default is current unit
    * @returns {Promise<object>} result
+   * @deprecated This API is not implemented and will be removed in a future version.
+   * Nacos server does not support batch query operations.
+   * Please use individual query methods instead.
    */
   batchQuery(dataIds: string[], group: string, options?: UnitOptions): Promise<object>;
 

@@ -387,15 +387,24 @@ export class ClientWorker extends Base implements IClientWorker {
     return true;
   }
 
+  /**
+   * @deprecated This API is not implemented and will be removed in a future version
+   */
   async publishAggr(dataId, group, datumId, content) {
     return true;
   }
 
+  /**
+   * @deprecated This API is not implemented and will be removed in a future version
+   */
   async removeAggr(dataId, group, datumId) {
     return null;
   }
 
   /**
+   * @deprecated This API is not implemented and will be removed in a future version.
+   * Nacos server does not support batch configuration retrieval operations.
+   * Please use individual getConfig() calls instead.
    * 批量获取配置
    * @param {Array} dataIds - data id array
    * @param {String} group - group name of the data
@@ -406,6 +415,9 @@ export class ClientWorker extends Base implements IClientWorker {
   }
 
   /**
+   * @deprecated This API is not implemented and will be removed in a future version.
+   * Nacos server does not support batch query operations.
+   * Please use individual query methods instead.
    * 批量查询
    * @param {Array} dataIds - data id array
    * @param {String} group - group name of the data

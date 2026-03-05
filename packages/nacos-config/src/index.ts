@@ -148,6 +148,9 @@ export class NacosConfigClient extends APIClientBase implements BaseClient {
   }
 
   /**
+   * @deprecated This API is not implemented and will be removed in a future version.
+   * Nacos server does not support batch configuration retrieval operations.
+   * Please use individual getConfig() calls instead.
    * 批量获取配置
    * @param {Array} dataIds - data id array
    * @param {String} group - group name of the data
@@ -161,6 +164,9 @@ export class NacosConfigClient extends APIClientBase implements BaseClient {
   }
 
   /**
+   * @deprecated This API is not implemented and will be removed in a future version.
+   * Nacos server does not support batch query operations.
+   * Please use individual query methods instead.
    * 批量查询
    * @param {Array} dataIds - data id array
    * @param {String} group - group name of the data
@@ -196,11 +202,17 @@ export class NacosConfigClient extends APIClientBase implements BaseClient {
     return await this._client.removeToAllUnit(dataId, group);
   }
 
+  /**
+   * @deprecated This API is not implemented and will be removed in a future version
+   */
   async publishAggr(dataId, group, datumId, content, options) {
     checkParameters(dataId, group, datumId);
     return await this._client.publishAggr(dataId, group, datumId, content, options);
   }
 
+  /**
+   * @deprecated This API is not implemented and will be removed in a future version
+   */
   async removeAggr(dataId, group, datumId, options) {
     checkParameters(dataId, group, datumId);
     return await this._client.removeAggr(dataId, group, datumId, options);
