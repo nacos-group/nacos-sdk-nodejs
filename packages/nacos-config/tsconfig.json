@@ -11,7 +11,8 @@
     "declaration": true,
     "outDir": "dist",
     "lib": ["es2017"],
-    "sourceMap": true
+    "sourceMap": true,
+    "skipLibCheck": true
   },
   "exclude": [
     "dist",

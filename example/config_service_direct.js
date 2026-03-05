@@ -3,8 +3,11 @@
 const NacosConfigClient = require('nacos').NacosConfigClient;
 
 const configClient = new NacosConfigClient({
-  serverAddr: '106.14.43.196:8848',
+  serverAddr: 'aliyun.nacos.net:80',
   namespace: '',
+  // 如果nacos开启了认证鉴权，需要在此处填写用户名密码
+  // username: 'xxx',
+  // password: 'xxx'
 });
 
 function sleep(time){
@@ -18,7 +21,7 @@ function sleep(time){
 (async () => {
   await configClient.ready();
 
-  const dataId = 'nacos.test.1';
+  const dataId = 'nacos.test.22';
   const group = 'DEFAULT_GROUP';
   const str = `example_test_${Math.random()}_${Date.now()}`;
 

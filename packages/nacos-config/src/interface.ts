@@ -262,6 +262,8 @@ export interface ClientOptions {
   serverAddr?: string;        // 用于直连，包含端口
   unit?: string;              // 内部单元化用
   nameServerAddr?: string;    // 老的兼容参数，逐步废弃，同 endpoint
+  username?: string;          // 认证的用户名
+  password?: string;          // 认证的密码
   cacheDir?: string;          // 缓存文件的路径
   identityKey?: string;       // Identity Key
   identityValue?: string;     // Identity Value

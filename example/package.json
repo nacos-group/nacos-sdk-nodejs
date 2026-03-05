@@ -2,6 +2,6 @@
   "name": "nacos-example",
   "version": "1.0.0",
   "dependencies": {
-    "nacos": "^1.0.0"
+    "nacos": "^2.5.0"
   }
 }
