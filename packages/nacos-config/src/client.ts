@@ -22,6 +22,7 @@ import {
   IConfiguration,
   IServerListManager,
   ISnapshot,
+  UnitOptions,
 } from './interface';
 import { ServerListManager } from './server_list_mgr';
 import { ClientWorker } from './client_worker';
@@ -158,12 +159,13 @@ export class DataClient extends Base implements BaseClient {
    * @param {String} content - config value
    * @param {Object} options
    *   - {Stirng} unit - which unit you want to connect, default is current unit
+   *   - {String} type - config type, e.g., 'text', 'json', 'xml', 'html', 'properties', 'yaml', etc.
    * @return {Boolean} success
    */
-  async publishSingle(dataId, group, content, options) {
+  async publishSingle(dataId, group, content, options?: UnitOptions) {
     checkParameters(dataId, group);
     const client = this.getClient(options);
-    return await client.publishSingle(dataId, group, content, options && options.type);
+    return await client.publishSingle(dataId, group, content, options);
   }
 
   /**

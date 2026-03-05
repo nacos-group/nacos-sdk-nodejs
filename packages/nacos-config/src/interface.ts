@@ -39,6 +39,10 @@ export interface CommonInputOptions {
 
 export interface UnitOptions {
   unit: string;
+  /**
+   * Configuration type, e.g., 'text', 'json', 'xml', 'html', 'properties', 'yaml', etc.
+   */
+  type?: string;
 }
 
 /**
@@ -96,6 +100,7 @@ export interface IClientWorker {
    * @param {String} content - config value
    * @param {Object} [options]
    *   - {String} unit - which unit you want to connect, default is current unit
+   *   - {String} type - config type, e.g., 'text', 'json', 'xml', 'html', 'properties', 'yaml', etc.
    * @returns {Promise<boolean>} true | false
    */
   publishSingle(dataId: string, group: string, content: string, options?: UnitOptions): Promise<boolean>;

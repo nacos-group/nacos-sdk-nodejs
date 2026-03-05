@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { API_ROUTE, ClientOptionKeys, NacosHttpError, IClientWorker, IConfiguration, ISnapshot } from './interface';
+import { API_ROUTE, ClientOptionKeys, NacosHttpError, IClientWorker, IConfiguration, ISnapshot, UnitOptions } from './interface';
 import { LINE_SEPARATOR, WORD_SEPARATOR } from './const';
 import { getMD5String } from './utils';
 import * as path from 'path';
@@ -349,10 +349,11 @@ export class ClientWorker extends Base implements IClientWorker {
    * @param {String} dataId - id of the data
    * @param {String} group - group name of the data
    * @param {String} content - config value
-   * @param {String} type - type of the data
+   * @param {Object} [options]
+   *   - {String} type - type of the data
    * @return {Boolean} success
    */
-  async publishSingle(dataId, group, content, type) {
+  async publishSingle(dataId, group, content, options?: UnitOptions) {
     await this.httpAgent.request(this.apiRoutePath.PUBLISH, {
       method: 'POST',
       encode: true,
@@ -361,7 +362,7 @@ export class ClientWorker extends Base implements IClientWorker {
         group,
         content,
         tenant: this.namespace,
-        type,
+        type: options && options.type,
         appName: this.appName
       },
     });
