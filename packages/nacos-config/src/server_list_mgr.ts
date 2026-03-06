@@ -67,8 +67,22 @@ export class ServerListManager extends Base implements IServerListManager {
 
     if (this.configuration.has(ClientOptionKeys.SERVERADDR)) {
       this.isDirectMode = true;
+      let serverAddrs = this.configuration.get(ClientOptionKeys.SERVERADDR);
+      
+      // Support multiple formats: string | string[] | comma-separated string
+      if (typeof serverAddrs === 'string') {
+        if (serverAddrs.includes(',')) {
+          // Comma-separated string: "addr1:port,addr2:port"
+          serverAddrs = serverAddrs.split(',').map(s => s.trim()).filter(s => s);
+        } else {
+          // Single string: "addr:port"
+          serverAddrs = [ serverAddrs ];
+        }
+      }
+      // If already an array, use as-is
+      
       this.serverListCache.set(CURRENT_UNIT, {
-        hosts: [ this.configuration.get(ClientOptionKeys.SERVERADDR) ],
+        hosts: serverAddrs,
         index: 0
       });
     }

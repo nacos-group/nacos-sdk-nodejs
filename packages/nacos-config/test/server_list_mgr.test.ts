@@ -215,4 +215,88 @@ describe('test/server_list_mgr.test.ts', () => {
       assert(addr && /^\d+\.\d+\.\d+\.\d+:\d+$/.test(addr));
     });
   });
+
+  describe('use multiple server addresses in direct mode', () => {
+    let serverManager: ServerListManager;
+
+    before(async () => {
+      const configuration = createDefaultConfiguration({
+        httpclient,
+        serverAddr: [ '127.0.0.1:8848', '127.0.0.2:8848', '127.0.0.3:8848' ],
+        cacheDir,
+      });
+      serverManager = new ServerListManager({ configuration });
+      await serverManager.ready();
+    });
+
+    after(async () => {
+      serverManager.close();
+      await rimraf(cacheDir);
+      await sleep(4000);
+    });
+
+    it('should support serverAddr as array', async () => {
+      const addr = await serverManager.getServerInCache();
+      assert(addr.hosts.length === 3);
+      assert(addr.hosts[ 0 ] === '127.0.0.1:8848');
+      assert(addr.hosts[ 1 ] === '127.0.0.2:8848');
+      assert(addr.hosts[ 2 ] === '127.0.0.3:8848');
+      assert(addr.index === 0);
+    });
+
+    it('should round-robin through all servers', async () => {
+      const servers = [];
+      for (let i = 0; i < 5; i++) {
+        const addr = await serverManager.getCurrentServerAddr();
+        servers.push(addr);
+      }
+      // Should cycle through all 3 servers
+      assert(servers[ 0 ] === '127.0.0.1:8848');
+      assert(servers[ 1 ] === '127.0.0.2:8848');
+      assert(servers[ 2 ] === '127.0.0.3:8848');
+      assert(servers[ 3 ] === '127.0.0.1:8848'); //循环 restart
+      assert(servers[ 4 ] === '127.0.0.2:8848');
+    });
+  });
+
+  describe('use comma-separated server addresses in direct mode', () => {
+    let serverManager: ServerListManager;
+
+    before(async () => {
+      const configuration = createDefaultConfiguration({
+        httpclient,
+        serverAddr: '127.0.0.1:8848, 127.0.0.2:8848 , 127.0.0.3:8848',
+        cacheDir,
+      });
+      serverManager = new ServerListManager({ configuration });
+      await serverManager.ready();
+    });
+
+    after(async () => {
+      serverManager.close();
+      await rimraf(cacheDir);
+      await sleep(4000);
+    });
+
+    it('should support serverAddr as comma-separated string', async () => {
+      const addr = await serverManager.getServerInCache();
+      assert(addr.hosts.length === 3);
+      assert(addr.hosts[ 0 ] === '127.0.0.1:8848');
+      assert(addr.hosts[ 1 ] === '127.0.0.2:8848');
+      assert(addr.hosts[ 2 ] === '127.0.0.3:8848');
+      assert(addr.index === 0);
+    });
+
+    it('should round-robin through comma-separated servers', async () => {
+      const servers = [];
+      for (let i = 0; i < 4; i++) {
+        const addr = await serverManager.getCurrentServerAddr();
+        servers.push(addr);
+      }
+      assert(servers[ 0 ] === '127.0.0.1:8848');
+      assert(servers[ 1 ] === '127.0.0.2:8848');
+      assert(servers[ 2 ] === '127.0.0.3:8848');
+      assert(servers[ 3 ] === '127.0.0.1:8848'); //循环 restart
+    });
+  });
 });
