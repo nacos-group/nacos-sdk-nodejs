@@ -83,8 +83,11 @@ export class ClientWorker extends Base implements IClientWorker {
   }
 
   close() {
+    this.debug('client worker closing, isClose: %s, subscriptions count: %d', this.isClose, this.subscriptions.size);
     this.isClose = true;
     this.removeAllListeners();
+    this.subscriptions.clear();
+    this.debug('client worker closed');
   }
 
   /**
