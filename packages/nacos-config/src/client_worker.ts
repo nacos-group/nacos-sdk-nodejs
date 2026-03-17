@@ -301,23 +301,78 @@ export class ClientWorker extends Base implements IClientWorker {
     return `${info.dataId}@${info.group}@${this.unit}`;
   }
 
-  private getSnapshotKey(dataId, group, tenant?) {
+  /**
+   * Get snapshot key with URL encoding for cross-platform compatibility
+   * Encodes special characters (especially ':' for Windows) in group/dataId/tenant/unit
+   */
+  private getSnapshotKeyEncoded(dataId: string, group: string, tenant?: string) {
+    tenant = tenant || this.namespace || 'default_tenant';
+    const encodedUnit = encodeURIComponent(this.unit);
+    const encodedTenant = encodeURIComponent(tenant);
+    const encodedGroup = encodeURIComponent(group);
+    const encodedDataId = encodeURIComponent(dataId);
+    return path.join('config', encodedUnit, encodedTenant, encodedGroup, encodedDataId);
+  }
+
+  /**
+   * Get legacy snapshot key without URL encoding (for backward compatibility)
+   * @deprecated Only used for migration fallback
+   */
+  private getSnapshotKeyLegacy(dataId: string, group: string, tenant?: string) {
     tenant = tenant || this.namespace || 'default_tenant';
     return path.join('config', this.unit, tenant, group, dataId);
+  }
+
+  /**
+   * Get snapshot content with transparent backward compatibility
+   * - Returns cached content from encoded path if exists
+   * - Falls back to legacy path and auto-migrates if encoded path doesn't exist
+   * - Subsequent calls will use encoded path directly
+   * 
+   * @param dataId - Configuration data ID
+   * @param group - Configuration group name
+   * @returns Cached content or null if not found
+   */
+  private async getSnapshot(dataId: string, group: string): Promise<string | null> {
+    const encodedKey = this.getSnapshotKeyEncoded(dataId, group);
+    const legacyKey = this.getSnapshotKeyLegacy(dataId, group);
+    
+    // 1. Try encoded path first
+    let content = await this.snapshot.get(encodedKey);
+    if (content !== null) {
+      this.debug('got snapshot from encoded path: %s', encodedKey);
+      return content;
+    }
+    
+    // 2. Fallback to legacy path
+    content = await this.snapshot.get(legacyKey);
+    if (content !== null) {
+      this.debug('got snapshot from legacy path: %s, migrating to encoded path', legacyKey);
+      
+      // 3. Migrate to encoded path (without deleting legacy)
+      try {
+        await this.snapshot.save(encodedKey, content);
+        this.debug('migrated snapshot from legacy to encoded: %s -> %s', legacyKey, encodedKey);
+      } catch (err) {
+        this.debug('migration failed for key %s@%s: %s', dataId, group, err.message);
+      }
+      
+      return content;
+    }
+    
+    return null;
   }
 
   /**
    * 获取配置
    * @param {String} dataId - id of the data
    * @param {String} group - group name of the data
-   * @return {String} value
+   * @return {String} value or null if config exists but is empty
    */
   async getConfig(dataId, group) {
     this.debug('calling getConfig, dataId: %s, group: %s', dataId, group);
     let content;
-    const key = this.getSnapshotKey(dataId, group);
-
-    // TODO 优先使用本地配置
+    const key = this.getSnapshotKeyEncoded(dataId, group);
 
     try {
       content = await this.httpAgent.request(this.apiRoutePath.GET, {
@@ -328,14 +383,19 @@ export class ClientWorker extends Base implements IClientWorker {
         },
       });
     } catch (err) {
-      const cache = await this.snapshot.get(key);
-      if (cache) {
+      // Fallback to snapshot cache with backward compatibility
+      const cache = await this.getSnapshot(dataId, group);
+      if (cache !== null) {
         this._error(err);
         return cache;
       }
       throw err;
     }
-    await this.snapshot.save(key, content);
+    
+    // Save to encoded path (even if content is null/empty)
+    await this.snapshot.save(key, content || '');
+    this.debug('got config from server (content=%s), saved to key: %s', 
+               content === null ? 'null' : 'length=' + content.length, key);
     return content;
   }
 
