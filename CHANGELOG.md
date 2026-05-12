@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [2.6.2](https://github.com/nacos-group/nacos-sdk-nodejs/compare/v2.6.1...v2.6.2) (2026-05-12)
+
+
+### Bug Fixes
+
+* **nacos-config:** make server list round-robin actually advance, avoid retries sticking to a dead IP ([#143](https://github.com/nacos-group/nacos-sdk-nodejs/pull/143))
+
+
+
+
 ## [2.0.1](https://github.com/nacos-group/nacos-sdk-nodejs/compare/v2.0.0...v2.0.1) (2021-01-26)
 
 
