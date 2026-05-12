@@ -166,9 +166,9 @@ export class ServerListManager extends Base implements IServerListManager {
     if (this.isSync || this.isDirectMode) {
       return;
     }
+    this.isSync = true;
     (async () => {
       try {
-        this.isSync = true;
         while (!this.isClosed) {
           await sleep(this.refreshInterval);
           const units = Array.from(this.serverListCache.keys());
@@ -182,9 +182,13 @@ export class ServerListManager extends Base implements IServerListManager {
             }
           }
         }
-        this.isSync = false;
       } catch (err) {
         this.emit('error', err);
+      } finally {
+        // Always reset the flag, whether the loop exits normally or
+        // throws, so that subsequent syncServers() calls are not
+        // permanently short-circuited.
+        this.isSync = false;
       }
     })();
   }
@@ -260,14 +264,18 @@ export class ServerListManager extends Base implements IServerListManager {
     if (!this.serverListCache.has(unit)) {
       await this.fetchServerList(unit);
     }
-    let serverData = this.serverListCache.get(unit);
-    if (serverData) {
+    const serverData = this.serverListCache.get(unit);
+    if (serverData && serverData.hosts && serverData.hosts.length) {
       let currentHostIndex = serverData.index;
-      if (currentHostIndex >= serverData.hosts.length) {
+      if (currentHostIndex >= serverData.hosts.length || currentHostIndex < 0) {
         // 超出序号，重头开始循环
         currentHostIndex = 0;
       }
-      const currentServer = serverData.hosts[ currentHostIndex++ ];
+      const currentServer = serverData.hosts[ currentHostIndex ];
+      // Write the next index back to the cache so that retries after a
+      // failed request can actually rotate to the next server.
+      serverData.index = (currentHostIndex + 1) % serverData.hosts.length;
+      this.serverListCache.set(unit, serverData);
       this.currentServerAddrMap.set(unit, currentServer);
     }
   }

@@ -73,11 +73,32 @@ describe('test/server_list_mgr.test.ts', () => {
       });
 
       it('should traverse all diamond server list data', async () => {
+        // First call initializes currentServerAddrMap and serverListCache.
         const start = await serverManager.getCurrentServerAddr();
-        let host;
-        do {
+        assert(start);
+        const cacheData = serverManager.getServerInCache();
+        assert(cacheData && cacheData.hosts && cacheData.hosts.length > 0);
+        const total = cacheData.hosts.length;
+        // Drive rotation explicitly via updateCurrentServer. Every one of
+        // the first `total - 1` rotations must return a host that has not
+        // been seen yet; otherwise the round-robin pointer is not really
+        // advancing and the test must fail.
+        const seen = new Set<string>();
+        seen.add(start);
+        let host = start;
+        for (let i = 0; i < total - 1; i++) {
+          await serverManager.updateCurrentServer();
           host = await serverManager.getCurrentServerAddr();
-        } while (start !== host);
+          assert(!seen.has(host),
+            `rotation revisited ${host} before covering all hosts`);
+          seen.add(host);
+        }
+        // After visiting every host exactly once, one more rotation must
+        // wrap back to the starting host.
+        await serverManager.updateCurrentServer();
+        host = await serverManager.getCurrentServerAddr();
+        assert(seen.size === total);
+        assert(host === start);
       });
 
       it('should return null when server list return empty', async () => {
@@ -246,15 +267,18 @@ describe('test/server_list_mgr.test.ts', () => {
 
     it('should round-robin through all servers', async () => {
       const servers = [];
-      for (let i = 0; i < 5; i++) {
-        const addr = await serverManager.getCurrentServerAddr();
-        servers.push(addr);
+      // The first getCurrentServerAddr() triggers one updateCurrentServer().
+      servers.push(await serverManager.getCurrentServerAddr());
+      // Subsequent rotation must be driven explicitly via updateCurrentServer().
+      for (let i = 0; i < 4; i++) {
+        await serverManager.updateCurrentServer();
+        servers.push(await serverManager.getCurrentServerAddr());
       }
       // Should cycle through all 3 servers
       assert(servers[ 0 ] === '127.0.0.1:8848');
       assert(servers[ 1 ] === '127.0.0.2:8848');
       assert(servers[ 2 ] === '127.0.0.3:8848');
-      assert(servers[ 3 ] === '127.0.0.1:8848'); //循环 restart
+      assert(servers[ 3 ] === '127.0.0.1:8848'); // cycle restart
       assert(servers[ 4 ] === '127.0.0.2:8848');
     });
   });
@@ -289,14 +313,17 @@ describe('test/server_list_mgr.test.ts', () => {
 
     it('should round-robin through comma-separated servers', async () => {
       const servers = [];
-      for (let i = 0; i < 4; i++) {
-        const addr = await serverManager.getCurrentServerAddr();
-        servers.push(addr);
+      // The first getCurrentServerAddr() triggers one updateCurrentServer().
+      servers.push(await serverManager.getCurrentServerAddr());
+      // Subsequent rotation must be driven explicitly via updateCurrentServer().
+      for (let i = 0; i < 3; i++) {
+        await serverManager.updateCurrentServer();
+        servers.push(await serverManager.getCurrentServerAddr());
       }
       assert(servers[ 0 ] === '127.0.0.1:8848');
       assert(servers[ 1 ] === '127.0.0.2:8848');
       assert(servers[ 2 ] === '127.0.0.3:8848');
-      assert(servers[ 3 ] === '127.0.0.1:8848'); //循环 restart
+      assert(servers[ 3 ] === '127.0.0.1:8848'); // cycle restart
     });
   });
 });
