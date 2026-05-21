@@ -15,6 +15,15 @@ importers:
         specifier: ^3.4.3
         version: 3.22.1(@octokit/core@7.0.6)(encoding@0.1.13)
 
+  example:
+    dependencies:
+      mz-modules:
+        specifier: ^2.1.0
+        version: 2.1.0
+      nacos:
+        specifier: workspace:*
+        version: link:../packages/nacos
+
   packages/nacos:
     dependencies:
       nacos-common:

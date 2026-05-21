@@ -1,55 +1,64 @@
 'use strict';
 
-const { NacosNamingClient } = require('../dist/naming/client');
+/**
+ * Nacos Naming (Service Discovery) Example
+ *
+ * Prerequisites:
+ *   - Nacos server running at 127.0.0.1:8848
+ *
+ * Usage:
+ *   node naming.js
+ */
+
+const { NacosNamingClient } = require('nacos');
 const sleep = require('mz-modules/sleep');
 
 const logger = console;
 
 async function main() {
-  // gRPC is the default transport. Use transport: 'http' to fall back to HTTP.
+  // Default transport is gRPC (Nacos 2.x/3.x).
+  // Set transport: 'http' to use the legacy HTTP API.
   const client = new NacosNamingClient({
     logger,
     serverList: '127.0.0.1:8848',
     namespace: 'public',
-    username: 'nacos',
-    password: 'nacos',
+    // username: 'nacos',
+    // password: 'nacos',
   });
   await client.ready();
-  console.log('NacosNamingClient ready (gRPC mode)');
+  console.log('NacosNamingClient ready\n');
 
   const serviceName = 'example.nodejs.service';
 
-  // 1. Subscribe to service changes
+  // 1. Subscribe — receive push notifications when instances change
   client.subscribe(serviceName, hosts => {
-    console.log('[Subscribe] hosts changed:', hosts.map(h => `${h.ip}:${h.port}`));
+    console.log('[subscribe] instances changed:',
+      hosts.map(h => `${h.ip}:${h.port} (healthy=${h.healthy})`));
   });
 
   // 2. Register instances
   await client.registerInstance(serviceName, { ip: '1.1.1.1', port: 8080 });
   await client.registerInstance(serviceName, { ip: '2.2.2.2', port: 8080 });
   console.log('Registered 2 instances');
-
   await sleep(3000);
 
   // 3. Query all instances
-  const hosts = await client.getAllInstances(serviceName);
-  console.log('All instances:', hosts.map(h => `${h.ip}:${h.port} healthy=${h.healthy}`));
+  const all = await client.getAllInstances(serviceName);
+  console.log('All instances:', all.map(h => `${h.ip}:${h.port}`));
 
   // 4. Select healthy instances only
   const healthy = await client.selectInstances(serviceName);
   console.log('Healthy instances:', healthy.map(h => `${h.ip}:${h.port}`));
 
-  // 5. Check server status
-  const status = await client.getServerStatus();
-  console.log('Server status:', status);
+  // 5. Server status
+  console.log('Server status:', await client.getServerStatus());
 
-  // 6. Deregister one instance
+  // 6. Deregister
   await client.deregisterInstance(serviceName, { ip: '1.1.1.1', port: 8080 });
   console.log('Deregistered 1.1.1.1:8080');
-
   await sleep(3000);
 
-  // 7. Cleanup
+  // Cleanup
   await client.deregisterInstance(serviceName, { ip: '2.2.2.2', port: 8080 });
   client.unSubscribe(serviceName);
   await client.close();
