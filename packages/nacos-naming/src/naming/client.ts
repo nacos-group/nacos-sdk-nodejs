@@ -15,23 +15,30 @@
  * limitations under the License.
  */
 
-'use strict';
-
-const utils = require('../util');
+/* tslint:disable:no-var-requires */
+declare function require(module: string): any;
 const Base = require('sdk-base');
 const assert = require('assert');
-const Instance = require('./instance');
-const NamingProxy = require('./proxy');
-const BeatReactor = require('./beat_reactor');
-const HostReactor = require('./host_reactor');
-const Constants = require('../const');
+/* tslint:enable:no-var-requires */
+
+import { Instance } from './instance';
+import { NamingProxy } from './proxy';
+import { BeatReactor } from './beat_reactor';
+import { HostReactor } from './host_reactor';
+import { NacosNamingClientOptions, Host, SubscribeInfo, BeatInfo } from '../interface';
+import { getGroupedName } from '../utils';
+import { DEFAULT_GROUP } from '../const';
 
 const defaultOptions = {
   namespace: 'public',
 };
 
-class NacosNamingClient extends Base {
-  constructor(options = {}) {
+export class NacosNamingClient extends Base {
+  private _serverProxy: NamingProxy;
+  private _beatReactor: BeatReactor;
+  private _hostReactor: HostReactor;
+
+  constructor(options: NacosNamingClientOptions = {} as NacosNamingClientOptions) {
     assert(options.logger, '');
     super(Object.assign({}, defaultOptions, options, { initMethod: '_init' }));
 
@@ -46,21 +53,21 @@ class NacosNamingClient extends Base {
     });
   }
 
-  async _init() {
+  async _init(): Promise<void> {
     await this._hostReactor.ready();
   }
 
-  get logger() {
+  get logger(): any {
     return this.options.logger;
   }
 
-  async registerInstance(serviceName, instance, groupName = Constants.DEFAULT_GROUP) {
+  async registerInstance(serviceName: string, instance: any, groupName: string = DEFAULT_GROUP): Promise<void> {
     if (!(instance instanceof Instance)) {
       instance = new Instance(instance);
     }
-    const serviceNameWithGroup = utils.getGroupedName(serviceName, groupName);
+    const serviceNameWithGroup = getGroupedName(serviceName, groupName);
     if (instance.ephemeral) {
-      const beatInfo = {
+      const beatInfo: BeatInfo = {
         serviceName: serviceNameWithGroup,
         ip: instance.ip,
         port: instance.port,
@@ -74,18 +81,18 @@ class NacosNamingClient extends Base {
     await this._serverProxy.registerService(serviceNameWithGroup, groupName, instance);
   }
 
-  async deregisterInstance(serviceName, instance, groupName = Constants.DEFAULT_GROUP) {
+  async deregisterInstance(serviceName: string, instance: any, groupName: string = DEFAULT_GROUP): Promise<void> {
     if (!(instance instanceof Instance)) {
       instance = new Instance(instance);
     }
-    const serviceNameWithGroup = utils.getGroupedName(serviceName, groupName);
+    const serviceNameWithGroup = getGroupedName(serviceName, groupName);
     this._beatReactor.removeBeatInfo(serviceNameWithGroup, instance.ip, instance.port);
     await this._serverProxy.deregisterService(serviceNameWithGroup, instance);
   }
 
-  async getAllInstances(serviceName, groupName = Constants.DEFAULT_GROUP, clusters = '', subscribe = true) {
-    let serviceInfo;
-    const serviceNameWithGroup = utils.getGroupedName(serviceName, groupName);
+  async getAllInstances(serviceName: string, groupName: string = DEFAULT_GROUP, clusters: string = '', subscribe: boolean = true): Promise<Host[]> {
+    let serviceInfo: any;
+    const serviceNameWithGroup = getGroupedName(serviceName, groupName);
     if (subscribe) {
       serviceInfo = await this._hostReactor.getServiceInfo(serviceNameWithGroup, clusters);
     } else {
@@ -95,9 +102,9 @@ class NacosNamingClient extends Base {
     return serviceInfo.hosts;
   }
 
-  async selectInstances(serviceName, groupName = Constants.DEFAULT_GROUP, clusters = '', healthy = true, subscribe = true) {
-    let serviceInfo;
-    const serviceNameWithGroup = utils.getGroupedName(serviceName, groupName);
+  async selectInstances(serviceName: string, groupName: string = DEFAULT_GROUP, clusters: string = '', healthy: boolean = true, subscribe: boolean = true): Promise<Host[]> {
+    let serviceInfo: any;
+    const serviceNameWithGroup = getGroupedName(serviceName, groupName);
     if (subscribe) {
       serviceInfo = await this._hostReactor.getServiceInfo(serviceNameWithGroup, clusters);
     } else {
@@ -106,48 +113,46 @@ class NacosNamingClient extends Base {
     if (!serviceInfo || !serviceInfo.hosts || !serviceInfo.hosts.length) {
       return [];
     }
-    return serviceInfo.hosts.filter(host => {
+    return serviceInfo.hosts.filter((host: Host) => {
       return host.healthy === healthy && host.enabled && host.weight > 0;
     });
   }
 
-  async getServerStatus() {
+  async getServerStatus(): Promise<string> {
     const isHealthy = await this._serverProxy.serverHealthy();
     return isHealthy ? 'UP' : 'DOWN';
   }
 
-  subscribe(info, listener) {
+  subscribe(info: string | SubscribeInfo, listener: (hosts: Host[]) => void): void {
     if (typeof info === 'string') {
       info = {
         serviceName: info,
       };
     }
-    const groupName = info.groupName || Constants.DEFAULT_GROUP;
-    const serviceNameWithGroup = utils.getGroupedName(info.serviceName, groupName);
+    const groupName = info.groupName || DEFAULT_GROUP;
+    const serviceNameWithGroup = getGroupedName(info.serviceName, groupName);
     this._hostReactor.subscribe({
       serviceName: serviceNameWithGroup,
       clusters: info.clusters || '',
     }, listener);
   }
 
-  unSubscribe(info, listener) {
+  unSubscribe(info: string | SubscribeInfo, listener?: (hosts: Host[]) => void): void {
     if (typeof info === 'string') {
       info = {
         serviceName: info,
       };
     }
-    const groupName = info.groupName || Constants.DEFAULT_GROUP;
-    const serviceNameWithGroup = utils.getGroupedName(info.serviceName, groupName);
+    const groupName = info.groupName || DEFAULT_GROUP;
+    const serviceNameWithGroup = getGroupedName(info.serviceName, groupName);
     this._hostReactor.unSubscribe({
       serviceName: serviceNameWithGroup,
       clusters: info.clusters || '',
     }, listener);
   }
 
-  async _close() {
+  async _close(): Promise<void> {
     await this._beatReactor.close();
     await this._hostReactor.close();
   }
 }
-
-module.exports = NacosNamingClient;
