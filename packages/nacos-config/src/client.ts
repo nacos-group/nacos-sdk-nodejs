@@ -49,6 +49,7 @@ export class DataClient extends Base implements BaseClient {
   private _grpcConnection: GrpcConnection | null;
   private _grpcTransportClient: GrpcTransportClient | null;
   private _grpcConfigProxy: GrpcConfigProxy | null;
+  private _grpcSubscribers: Map<string, Function[]> | null;
 
   constructor(options: ClientOptions) {
     if(!options.endpoint && !options.serverAddr) {
@@ -58,10 +59,11 @@ export class DataClient extends Base implements BaseClient {
     options = Object.assign({}, DEFAULT_OPTIONS, options);
     super(options);
     this.configuration = this.options.configuration = new Configuration(options);
-    this._transport = (options.transport === 'grpc') ? 'grpc' : 'http';
+    this._transport = (options.transport === 'http') ? 'http' : 'grpc';
     this._grpcConnection = null;
     this._grpcTransportClient = null;
     this._grpcConfigProxy = null;
+    this._grpcSubscribers = null;
 
     this.snapshot = this.getSnapshot();
     (<any>this.snapshot).on('error', err => this.throwError(err));
@@ -89,13 +91,14 @@ export class DataClient extends Base implements BaseClient {
       const logger = (this.options as any).logger || console;
       this._grpcConnection = new GrpcConnection({
         serverList,
-        namespace: options.namespace,
+        namespace: options.namespace || 'public',
         ssl: options.ssl,
         logger,
         accessKey: options.accessKey,
         secretKey: options.secretKey,
         username: options.username,
         password: options.password,
+        labels: { source: 'sdk', module: 'config' },
       });
 
       this._grpcTransportClient = new GrpcTransportClient(this._grpcConnection);
@@ -126,7 +129,17 @@ export class DataClient extends Base implements BaseClient {
     }
 
     this.clients = new Map();
-    this.ready(true);
+
+    if (this._transport === 'grpc') {
+      this._grpcConnection!.connect().then(() => {
+        this.ready(true);
+      }).catch(err => {
+        this.throwError(err);
+        this.ready(true);
+      });
+    } else {
+      this.ready(true);
+    }
   }
 
   get appName() {
@@ -171,23 +184,68 @@ export class DataClient extends Base implements BaseClient {
   subscribe(info, listener) {
     const { dataId, group } = info;
     checkParameters(dataId, group);
+
+    if (this._grpcConfigProxy) {
+      const key = `${dataId}@@${group}`;
+      if (!this._grpcSubscribers) {
+        this._grpcSubscribers = new Map();
+        this._grpcConfigProxy.on('configChanged', async (evt) => {
+          const evtKey = `${evt.dataId}@@${evt.group}`;
+          const listeners = this._grpcSubscribers!.get(evtKey);
+          if (listeners && listeners.length > 0) {
+            try {
+              const content = await this._grpcConfigProxy!.getConfig(evt.dataId, evt.group);
+              for (const fn of listeners) { fn(content); }
+            } catch (err) {
+              this.throwError(err);
+            }
+          }
+        });
+      }
+      const listeners = this._grpcSubscribers.get(key) || [];
+      listeners.push(listener);
+      this._grpcSubscribers.set(key, listeners);
+      // Get current content and call listener immediately
+      this._grpcConfigProxy.getConfig(dataId, group).then(content => {
+        if (content) listener(content);
+      }).catch(() => {});
+      // Register gRPC listen (need MD5 of current content)
+      this._grpcConfigProxy.getConfig(dataId, group).then(content => {
+        const crypto = require('crypto');
+        const md5 = content ? crypto.createHash('md5').update(content).digest('hex') : '';
+        this._grpcConfigProxy!.addListener(dataId, group, md5).catch(() => {});
+      }).catch(() => {});
+      return this;
+    }
+
     const client = this.getClient(info);
     client.subscribe({ dataId, group }, listener);
     return this;
   }
 
-  /**
-   * 退订
-   * @param {Object} info
-   *   - {String} dataId - id of the data you want to subscribe
-   *   - {String} [group] - group name of the data
-   *   - {String} [unit] - which unit you want to connect, default is current unit
-   * @param {Function} listener - listener
-   * @return {DataClient} self
-   */
   unSubscribe(info, listener) {
     const { dataId, group } = info;
     checkParameters(dataId, group);
+
+    if (this._grpcConfigProxy) {
+      const key = `${dataId}@@${group}`;
+      if (this._grpcSubscribers) {
+        if (listener) {
+          const listeners = this._grpcSubscribers.get(key) || [];
+          const idx = listeners.indexOf(listener);
+          if (idx >= 0) listeners.splice(idx, 1);
+          if (listeners.length === 0) {
+            this._grpcSubscribers.delete(key);
+            this._grpcConfigProxy.removeListener(dataId, group).catch(() => {});
+          }
+        } else {
+          this._grpcSubscribers.delete(key);
+          this._grpcConfigProxy.removeListener(dataId, group).catch(() => {});
+        }
+      }
+      return this;
+    }
+
     const client = this.getClient(info);
     client.unSubscribe({ dataId, group }, listener);
     return this;
