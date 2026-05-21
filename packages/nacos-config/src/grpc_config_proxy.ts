@@ -42,7 +42,7 @@ export class GrpcConfigProxy extends Base {
   constructor(options: { transportClient: GrpcTransportClient; namespace?: string; logger: any }) {
     super({ logger: options.logger });
     this._transportClient = options.transportClient;
-    this._namespace = options.namespace || '';
+    this._namespace = options.namespace || 'public';
     this._logger = options.logger;
     this._listenContexts = new Map();
 
