@@ -21,8 +21,10 @@ const Base = require('sdk-base');
 const assert = require('assert');
 /* tslint:enable:no-var-requires */
 
+import { GrpcConnection, GrpcTransportClient } from 'nacos-common';
 import { Instance } from './instance';
 import { NamingProxy } from './proxy';
+import { GrpcNamingProxy } from './grpc_proxy';
 import { BeatReactor } from './beat_reactor';
 import { HostReactor } from './host_reactor';
 import { NacosNamingClientOptions, Host, SubscribeInfo, BeatInfo } from '../interface';
@@ -34,26 +36,71 @@ const defaultOptions = {
 };
 
 export class NacosNamingClient extends Base {
-  private _serverProxy: NamingProxy;
-  private _beatReactor: BeatReactor;
+  private _serverProxy: NamingProxy | GrpcNamingProxy;
+  private _beatReactor: BeatReactor | null;
   private _hostReactor: HostReactor;
+  private _transport: 'grpc' | 'http';
+  private _connection: GrpcConnection | null;
+  private _transportClient: GrpcTransportClient | null;
 
   constructor(options: NacosNamingClientOptions = {} as NacosNamingClientOptions) {
     assert(options.logger, '');
     super(Object.assign({}, defaultOptions, options, { initMethod: '_init' }));
 
-    this._serverProxy = new NamingProxy(this.options);
-    this._beatReactor = new BeatReactor({
-      serverProxy: this._serverProxy,
-      logger: this.logger,
-    });
-    this._hostReactor = new HostReactor({
-      serverProxy: this._serverProxy,
-      logger: this.logger,
-    });
+    // Default transport is 'grpc'
+    this._transport = options.transport || 'grpc';
+    this._beatReactor = null;
+    this._connection = null;
+    this._transportClient = null;
+
+    if (this._transport === 'http') {
+      // HTTP mode: existing behavior
+      const proxy = new NamingProxy(this.options);
+      this._serverProxy = proxy;
+      this._beatReactor = new BeatReactor({
+        serverProxy: proxy,
+        logger: this.logger,
+      });
+      this._hostReactor = new HostReactor({
+        serverProxy: proxy,
+        logger: this.logger,
+      });
+    } else {
+      // gRPC mode: use GrpcConnection + GrpcTransportClient + GrpcNamingProxy
+      const rawServerList: string[] = typeof options.serverList === 'string'
+        ? (options.serverList as string).split(',').map((s: string) => s.trim()).filter(Boolean)
+        : (options.serverList as string[]) || [];
+
+      this._connection = new GrpcConnection({
+        serverList: rawServerList,
+        namespace: options.namespace || 'public',
+        ssl: options.ssl,
+        logger: options.logger,
+        username: options.username,
+        password: options.password,
+      });
+
+      this._transportClient = new GrpcTransportClient(this._connection);
+
+      const grpcProxy = new GrpcNamingProxy({
+        transportClient: this._transportClient,
+        namespace: options.namespace || 'public',
+        logger: options.logger,
+      });
+      this._serverProxy = grpcProxy;
+
+      // No BeatReactor in gRPC mode (connection is the heartbeat)
+      this._hostReactor = new HostReactor({
+        serverProxy: grpcProxy,
+        logger: this.logger,
+      });
+    }
   }
 
   async _init(): Promise<void> {
+    if (this._transport === 'grpc' && this._connection) {
+      await this._connection.connect();
+    }
     await this._hostReactor.ready();
   }
 
@@ -66,7 +113,7 @@ export class NacosNamingClient extends Base {
       instance = new Instance(instance);
     }
     const serviceNameWithGroup = getGroupedName(serviceName, groupName);
-    if (instance.ephemeral) {
+    if (this._transport === 'http' && this._beatReactor && instance.ephemeral) {
       const beatInfo: BeatInfo = {
         serviceName: serviceNameWithGroup,
         ip: instance.ip,
@@ -86,7 +133,9 @@ export class NacosNamingClient extends Base {
       instance = new Instance(instance);
     }
     const serviceNameWithGroup = getGroupedName(serviceName, groupName);
-    this._beatReactor.removeBeatInfo(serviceNameWithGroup, instance.ip, instance.port);
+    if (this._beatReactor) {
+      this._beatReactor.removeBeatInfo(serviceNameWithGroup, instance.ip, instance.port);
+    }
     await this._serverProxy.deregisterService(serviceNameWithGroup, instance);
   }
 
@@ -152,7 +201,12 @@ export class NacosNamingClient extends Base {
   }
 
   async _close(): Promise<void> {
-    await this._beatReactor.close();
+    if (this._beatReactor) {
+      await this._beatReactor.close();
+    }
     await this._hostReactor.close();
+    if (this._connection) {
+      this._connection.close();
+    }
   }
 }
