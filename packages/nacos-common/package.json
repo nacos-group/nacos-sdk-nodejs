@@ -6,7 +6,8 @@
   "main": "dist/index.js",
   "author": "gxcsoccer <gxcsoccer@126.com>",
   "dependencies": {
-    "@grpc/grpc-js": "^1.9.0"
+    "@grpc/grpc-js": "^1.9.0",
+    "@grpc/proto-loader": "^0.7.0"
   },
   "optionalDependencies": {
     "@nacos-group/sdk-proto": "^1.0.0-beta.7"
@@ -27,7 +28,7 @@
     "ci": "npm run lint && npm run cov",
     "build": "midway-bin build --ts"
   },
-  "files": ["d.ts", "dist", "src"],
+  "files": ["d.ts", "dist", "src", "proto"],
   "repository": { "type": "git", "url": "git+https://github.com/nacos-group/nacos-sdk-nodejs.git" },
   "license": "Apache",
   "bugs": { "url": "https://github.com/nacos-group/nacos-sdk-nodejs/issues" },
