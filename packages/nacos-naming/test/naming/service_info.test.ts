@@ -15,11 +15,9 @@
  * limitations under the License.
  */
 
-'use strict';
-
-const mm = require('mm');
-const assert = require('assert');
-const ServiceInfo = require('../../lib/naming/service_info');
+import * as assert from 'assert';
+import * as mm from 'mm';
+import { ServiceInfo } from '../../src/naming/service_info';
 
 describe('test/naming/service_info.test.js', () => {
   afterEach(mm.restore);

@@ -15,14 +15,12 @@
  * limitations under the License.
  */
 
-'use strict';
-
-const mm = require('mm');
-const http = require('http');
-const assert = require('assert');
-const sleep = require('mz-modules/sleep');
-const NameProxy = require('../../lib/naming/proxy');
-const Instance = require('../../lib/naming/instance');
+import * as assert from 'assert';
+import * as http from 'http';
+import * as mm from 'mm';
+import { NamingProxy } from '../../src/naming/proxy';
+import { Instance } from '../../src/naming/instance';
+const { sleep } = require('mz-modules');
 
 const logger = console;
 const serviceName = 'nodejs.test.' + process.versions.node;
@@ -31,7 +29,7 @@ describe('test/naming/proxy.test.js', () => {
   afterEach(mm.restore);
 
   it('should ok', async function() {
-    const proxy = new NameProxy({
+    const proxy = new NamingProxy({
       logger,
       serverList: '127.0.0.1',
     });
@@ -49,7 +47,7 @@ describe('test/naming/proxy.test.js', () => {
     assert(result === 'ok');
     await sleep(1000);
 
-    let jsonStr = await proxy.queryList(serviceName, 'NODEJS', '', 'false');
+    let jsonStr = await proxy.queryList(serviceName, 'NODEJS', 0, false);
     let serviceInfo = JSON.parse(jsonStr);
 
     assert(serviceInfo && serviceInfo.dom === 'DEFAULT_GROUP@@' + serviceName);
@@ -60,7 +58,7 @@ describe('test/naming/proxy.test.js', () => {
     result = await proxy.deregisterService(serviceName, instance);
     assert(result === 'ok');
 
-    jsonStr = await proxy.queryList(serviceName, 'NODEJS', '', 'false');
+    jsonStr = await proxy.queryList(serviceName, 'NODEJS', 0, false);
     serviceInfo = JSON.parse(jsonStr);
 
     assert(serviceInfo && serviceInfo.dom === 'DEFAULT_GROUP@@' + serviceName);
@@ -70,7 +68,7 @@ describe('test/naming/proxy.test.js', () => {
   });
 
   it('should serverHealthy ok', async function() {
-    const proxy = new NameProxy({
+    const proxy = new NamingProxy({
       logger,
       endpoint: '127.0.0.1:8849',
       serverList: '127.0.0.1:8848',
@@ -105,7 +103,7 @@ describe('test/naming/proxy.test.js', () => {
   });
 
   it('should failed if no server available', async function() {
-    const proxy = new NameProxy({
+    const proxy = new NamingProxy({
       logger,
       serverList: '',
     });
@@ -118,12 +116,12 @@ describe('test/naming/proxy.test.js', () => {
   });
 
   it('should support naocsDomain', async function() {
-    const proxy = new NameProxy({
+    const proxy = new NamingProxy({
       logger,
       serverList: '',
     });
     await proxy.ready();
-    proxy.nacosDomain = '127.0.0.1:8848';
+    (proxy as any).nacosDomain = '127.0.0.1:8848';
 
     let isHealthy = await proxy.serverHealthy();
     assert(isHealthy);
@@ -139,7 +137,7 @@ describe('test/naming/proxy.test.js', () => {
   });
 
   it('should sendBeat ok', async () => {
-    const proxy = new NameProxy({
+    const proxy = new NamingProxy({
       logger,
       serverList: '127.0.0.1:8848',
     });
@@ -167,7 +165,7 @@ describe('test/naming/proxy.test.js', () => {
   });
 
   it('should getServiceList ok', async () => {
-    const proxy = new NameProxy({
+    const proxy = new NamingProxy({
       logger,
       serverList: '127.0.0.1:8848',
     });
@@ -199,7 +197,7 @@ describe('test/naming/proxy.test.js', () => {
   });
 
   describe('endpoint', () => {
-    let server;
+    let server: http.Server;
     before(done => {
       server = http.createServer((req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/text' });
@@ -213,33 +211,33 @@ describe('test/naming/proxy.test.js', () => {
     });
 
     it('should get serverList from endpoint', async () => {
-      const proxy = new NameProxy({
+      const proxy = new NamingProxy({
         logger,
         endpoint: '127.0.0.1:8849',
         vipSrvRefInterMillis: 5000,
       });
       await proxy.ready();
 
-      assert(proxy.serverList && proxy.serverList.length === 0);
-      assert(proxy.serversFromEndpoint && proxy.serversFromEndpoint.length === 1);
+      assert((proxy as any).serverList && (proxy as any).serverList.length === 0);
+      assert((proxy as any).serversFromEndpoint && (proxy as any).serversFromEndpoint.length === 1);
 
-      assert(proxy.lastSrvRefTime > 0);
+      assert((proxy as any).lastSrvRefTime > 0);
 
       const isHealthy = await proxy.serverHealthy();
       assert(isHealthy);
 
       await sleep(6000);
 
-      const lastSrvRefTime = proxy.lastSrvRefTime;
+      const lastSrvRefTime = (proxy as any).lastSrvRefTime;
       assert(Date.now() - lastSrvRefTime < 5000);
-      await proxy._refreshSrvIfNeed();
-      assert(proxy.lastSrvRefTime === lastSrvRefTime);
+      await (proxy as any)._refreshSrvIfNeed();
+      assert((proxy as any).lastSrvRefTime === lastSrvRefTime);
 
       await proxy.close();
     });
 
     it('should not healthy', async () => {
-      const proxy = new NameProxy({
+      const proxy = new NamingProxy({
         logger,
         endpoint: 'unknown.com',
       });

@@ -15,10 +15,8 @@
  * limitations under the License.
  */
 
-'use strict';
-
-const assert = require('assert');
-const Instance = require('../../lib/naming/instance');
+import * as assert from 'assert';
+import { Instance } from '../../src/naming/instance';
 
 describe('test/naming/instance.test.js', () => {
   it('should new instance ok', () => {

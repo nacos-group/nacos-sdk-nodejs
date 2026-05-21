@@ -15,13 +15,11 @@
  * limitations under the License.
  */
 
-'use strict';
-
-const dgram = require('dgram');
-const assert = require('assert');
-const sleep = require('mz-modules/sleep');
+import * as assert from 'assert';
+import * as dgram from 'dgram';
+import { PushReceiver } from '../../src/naming/push_receiver';
+const { sleep } = require('mz-modules');
 const awaitEvent = require('await-event');
-const PushReceiver = require('../../lib/naming/push_receiver');
 
 const logger = console;
 
@@ -29,7 +27,7 @@ describe('test/naming/push_receiver.test.js', () => {
   it('should push message ok', async function() {
     const pushReceiver = new PushReceiver({
       logger,
-      processServiceJSON(json) {
+      processServiceJSON(json: string) {
         const data = JSON.parse(json);
         assert.deepEqual(data, {
           cacheMillis: 20000,
@@ -82,7 +80,7 @@ describe('test/naming/push_receiver.test.js', () => {
     client.send(errorMsg, pushReceiver.udpPort, 'localhost');
 
     try {
-      await pushReceiver.await('error');
+      await (pushReceiver as any).await('error');
     } catch (err) {
       console.log(err);
     }
@@ -100,7 +98,7 @@ describe('test/naming/push_receiver.test.js', () => {
     const udpPort1 = pushReceiver.udpPort;
     assert(udpPort1);
 
-    pushReceiver._server.emit('error', new Error('mock error'));
+    (pushReceiver as any)._server.emit('error', new Error('mock error'));
 
     await sleep(100);
 
