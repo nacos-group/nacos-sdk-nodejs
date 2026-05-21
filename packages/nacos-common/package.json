@@ -1,0 +1,33 @@
+{
+  "name": "nacos-common",
+  "version": "2.6.2",
+  "description": "nacos common types and transport abstractions",
+  "keywords": ["nacos", "nacos-common"],
+  "main": "dist/index.js",
+  "author": "gxcsoccer <gxcsoccer@126.com>",
+  "dependencies": {
+    "@nacos-group/nacos-sdk-proto": "^1.0.0",
+    "@grpc/grpc-js": "^1.9.0"
+  },
+  "devDependencies": {
+    "@types/mocha": "^5.2.5",
+    "@types/node": "^10.9.4",
+    "midway-bin": "1",
+    "tslint": "^5.11.0",
+    "typescript": "^3.2.2"
+  },
+  "engines": { "node": ">= 8.0.0" },
+  "scripts": {
+    "lint": "tslint . --ext .ts",
+    "test": "npm run test-local",
+    "test-local": "TEST_REPORTER=spec midway-bin test --ts",
+    "cov": "TEST_REPORTER=spec midway-bin cov --ts",
+    "ci": "npm run lint && npm run cov",
+    "build": "midway-bin build --ts"
+  },
+  "files": ["d.ts", "dist", "src"],
+  "repository": { "type": "git", "url": "git+https://github.com/nacos-group/nacos-sdk-nodejs.git" },
+  "license": "Apache",
+  "bugs": { "url": "https://github.com/nacos-group/nacos-sdk-nodejs/issues" },
+  "homepage": "https://github.com/nacos-group/nacos-sdk-nodejs#readme"
+}
