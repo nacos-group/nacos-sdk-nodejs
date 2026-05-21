@@ -51,10 +51,58 @@ export class GrpcNamingProxy extends Base implements NamingTransport {
     this._transportClient = options.transportClient;
     this._namespace = options.namespace || 'public';
     this._logger = options.logger;
-    /** Registered instances for reconnect recovery: key → instance */
     this._registeredInstances = new Map();
-    /** Active subscriptions for reconnect recovery: key → params */
     this._activeSubscriptions = new Map();
+
+    this._transportClient.onReconnect(() => this._onReconnect());
+  }
+
+  private async _onReconnect(): Promise<void> {
+    this._logger.info('[GrpcNamingProxy] reconnected, recovering %d instances and %d subscriptions',
+      this._registeredInstances.size, this._activeSubscriptions.size);
+
+    for (const { serviceName, instance } of this._registeredInstances.values()) {
+      try {
+        const { serviceName: svc, groupName: grp } = splitGroupedName(serviceName);
+        await this._transportClient.request({
+          namespace: this._namespace,
+          serviceName: svc,
+          groupName: grp,
+          type: 'registerInstance',
+          instance: {
+            instanceId: instance.instanceId || '',
+            ip: instance.ip,
+            port: instance.port,
+            weight: instance.weight != null ? instance.weight : 1.0,
+            healthy: instance.healthy !== false,
+            enabled: instance.enabled !== false,
+            ephemeral: instance.ephemeral !== false,
+            clusterName: instance.clusterName || 'DEFAULT',
+            serviceName: svc,
+            metadata: instance.metadata || {},
+          },
+        }, 'InstanceRequest', 5000);
+        this._logger.info('[GrpcNamingProxy] re-registered instance %s:%d for %s', instance.ip, instance.port, serviceName);
+      } catch (err) {
+        this._logger.warn('[GrpcNamingProxy] re-register failed for %s: %s', serviceName, (err as Error).message);
+      }
+    }
+
+    for (const { serviceName, clusters } of this._activeSubscriptions.values()) {
+      try {
+        const { serviceName: svc, groupName: grp } = splitGroupedName(serviceName);
+        await this._transportClient.request({
+          namespace: this._namespace,
+          serviceName: svc,
+          groupName: grp,
+          clusters,
+          subscribe: true,
+        }, 'SubscribeServiceRequest', 5000);
+        this._logger.info('[GrpcNamingProxy] re-subscribed %s', serviceName);
+      } catch (err) {
+        this._logger.warn('[GrpcNamingProxy] re-subscribe failed for %s: %s', serviceName, (err as Error).message);
+      }
+    }
   }
 
   get logger(): any {
