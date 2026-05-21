@@ -118,4 +118,39 @@ describe('test/naming/grpc_proxy.test.ts', () => {
     assert(typeof result.count === 'number', `count should be a number, got: ${typeof result.count}`);
     assert(Array.isArray(result.data), `data should be an array, got: ${typeof result.data}`);
   });
+
+  it('should subscribe and receive push via gRPC', async function() {
+    this.timeout(30000);
+    const subServiceName = 'nodejs.grpc.subscribe.test.' + process.versions.node;
+    const instance = new Instance({ ip: '20.20.20.20', port: 7070 });
+
+    // Register push handler
+    const pushes: string[] = [];
+    proxy.registerPushHandler((json: string) => {
+      pushes.push(json);
+    });
+
+    // Subscribe
+    const subResult = await proxy.subscribe(subServiceName, 'DEFAULT_GROUP', '');
+    const subInfo = JSON.parse(subResult);
+    console.log('[TEST] subscribe result hosts:', subInfo.hosts.length);
+
+    // Register an instance to trigger push
+    await proxy.registerService(subServiceName, 'DEFAULT_GROUP', instance);
+    console.log('[TEST] instance registered, waiting for push...');
+
+    // Wait for server push
+    await sleep(8000);
+
+    console.log('[TEST] pushes received:', pushes.length);
+    if (pushes.length > 0) {
+      const pushed = JSON.parse(pushes[pushes.length - 1]);
+      const found = (pushed.hosts || []).some((h: any) => h.ip === '20.20.20.20' && h.port === 7070);
+      assert(found, `Push should contain 20.20.20.20:7070, got hosts: ${JSON.stringify(pushed.hosts)}`);
+    }
+
+    // Cleanup
+    await proxy.deregisterService('DEFAULT_GROUP@@' + subServiceName, instance);
+    await proxy.unSubscribe(subServiceName, 'DEFAULT_GROUP', '');
+  });
 });

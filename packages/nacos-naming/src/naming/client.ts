@@ -90,10 +90,16 @@ export class NacosNamingClient extends Base {
       });
       this._serverProxy = grpcProxy;
 
-      // No BeatReactor in gRPC mode (connection is the heartbeat)
+      // No BeatReactor or PushReceiver in gRPC mode
       this._hostReactor = new HostReactor({
         serverProxy: grpcProxy,
         logger: this.logger,
+        transport: 'grpc',
+      });
+
+      // Wire gRPC server push to HostReactor
+      grpcProxy.registerPushHandler((json: string) => {
+        this._hostReactor.processServiceJSON(json);
       });
     }
   }

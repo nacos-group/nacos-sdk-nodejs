@@ -183,27 +183,83 @@ export class GrpcNamingProxy extends Base implements NamingTransport {
     };
   }
 
+  async subscribe(serviceName: string, groupName: string, clusters: string): Promise<string> {
+    const { serviceName: svc, groupName: grp } = splitGroupedName(serviceName);
+    const request = {
+      namespace: this._namespace,
+      serviceName: svc,
+      groupName: grp,
+      clusters,
+      subscribe: true,
+    };
+
+    const response: any = await this._transportClient.request(request, 'SubscribeServiceRequest');
+    const key = `${serviceName}@@${clusters}`;
+    this._activeSubscriptions.set(key, { serviceName, groupName: grp, clusters });
+
+    const si = response.serviceInfo || {};
+    return JSON.stringify({
+      name: si.name || svc,
+      dom: si.name || svc,
+      groupName: si.groupName || grp,
+      clusters: si.clusters || clusters,
+      cacheMillis: si.cacheMillis || 10000,
+      hosts: si.hosts || [],
+      lastRefTime: si.lastRefTime || Date.now(),
+      checksum: si.checksum || '',
+    });
+  }
+
+  async unSubscribe(serviceName: string, groupName: string, clusters: string): Promise<void> {
+    const { serviceName: svc, groupName: grp } = splitGroupedName(serviceName);
+    const request = {
+      namespace: this._namespace,
+      serviceName: svc,
+      groupName: grp,
+      clusters,
+      subscribe: false,
+    };
+
+    try {
+      await this._transportClient.request(request, 'SubscribeServiceRequest');
+    } catch (err) {
+      this._logger.warn('[GrpcNamingProxy] unSubscribe failed: %s', (err as Error).message);
+    }
+    const key = `${serviceName}@@${clusters}`;
+    this._activeSubscriptions.delete(key);
+  }
+
+  registerPushHandler(handler: (serviceInfoJson: string) => void): void {
+    this._transportClient.registerServerPushHandler(
+      'NotifySubscriberRequest',
+      (request: any) => {
+        const si = request.serviceInfo || {};
+        const json = JSON.stringify({
+          name: si.name || '',
+          dom: si.name || '',
+          groupName: si.groupName || '',
+          clusters: si.clusters || '',
+          cacheMillis: si.cacheMillis || 10000,
+          hosts: si.hosts || [],
+          lastRefTime: si.lastRefTime || Date.now(),
+          checksum: si.checksum || '',
+        });
+        handler(json);
+        return { __type: 'NotifySubscriberResponse', resultCode: 200, message: 'success' };
+      }
+    );
+  }
+
   async close(): Promise<void> {
+    this._transportClient.removeServerPushHandler('NotifySubscriberRequest');
     this._registeredInstances.clear();
     this._activeSubscriptions.clear();
   }
 
-  /** Track an active subscription for reconnect recovery */
-  addSubscription(key: string, serviceName: string, groupName: string, clusters: string): void {
-    this._activeSubscriptions.set(key, { serviceName, groupName, clusters });
-  }
-
-  /** Remove a tracked subscription */
-  removeSubscription(key: string): void {
-    this._activeSubscriptions.delete(key);
-  }
-
-  /** Get all registered instances (for reconnect recovery) */
   getRegisteredInstances(): Map<string, { serviceName: string; groupName: string; instance: any }> {
     return this._registeredInstances;
   }
 
-  /** Get all active subscriptions (for reconnect recovery) */
   getActiveSubscriptions(): Map<string, { serviceName: string; groupName: string; clusters: string }> {
     return this._activeSubscriptions;
   }

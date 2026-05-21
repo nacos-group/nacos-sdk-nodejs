@@ -53,19 +53,17 @@ export class HostReactor extends Base {
   private _serviceInfoMap: Map<string, ServiceInfo>;
   private _updatingSet: Set<string>;
   private _futureMap: Map<string, FutureTask>;
-  private _pushReceiver: PushReceiver;
+  private _pushReceiver: PushReceiver | null;
 
   constructor(options: any = {}) {
     assert(options.logger, '[HostReactor] options.logger is required');
     assert(options.serverProxy, '[HostReactor] options.serverProxy is required');
     super(Object.assign({}, options, { initMethod: '_init' }));
 
-    // TODO: cacheDir
-
     this._serviceInfoMap = new Map();
     this._updatingSet = new Set();
     this._futureMap = new Map();
-    this._pushReceiver = new PushReceiver(this);
+    this._pushReceiver = options.transport === 'grpc' ? null : new PushReceiver(this);
   }
 
   get logger(): any {
@@ -85,10 +83,11 @@ export class HostReactor extends Base {
   }
 
   async _init(): Promise<void> {
-    await Promise.all([
-      this.serverProxy.ready(),
-      this._pushReceiver.ready(),
-    ]);
+    const waits: Promise<void>[] = [this.serverProxy.ready()];
+    if (this._pushReceiver) {
+      waits.push(this._pushReceiver.ready());
+    }
+    await Promise.all(waits);
   }
 
   processServiceJSON(json: string): ServiceInfo | undefined {
@@ -225,7 +224,8 @@ export class HostReactor extends Base {
 
   async updateServiceNow(serviceName: string, clusters: string): Promise<void> {
     try {
-      const result = await this.serverProxy.queryList(serviceName, clusters, this._pushReceiver.udpPort, false);
+      const udpPort = this._pushReceiver ? this._pushReceiver.udpPort : 0;
+      const result = await this.serverProxy.queryList(serviceName, clusters, udpPort, false);
       if (result) {
         this.processServiceJSON(result);
       }
@@ -242,7 +242,8 @@ export class HostReactor extends Base {
 
   async refreshOnly(serviceName: string, clusters: string): Promise<void> {
     try {
-      await this.serverProxy.queryList(serviceName, clusters, this._pushReceiver.udpPort, false);
+      const udpPort = this._pushReceiver ? this._pushReceiver.udpPort : 0;
+      await this.serverProxy.queryList(serviceName, clusters, udpPort, false);
     } catch (err) {
       (err as any).message = 'failed to update serviceName: ' + serviceName + ', caused by: ' + (err as any).message;
       this.emit('error', err);
@@ -303,7 +304,9 @@ export class HostReactor extends Base {
   }
 
   async _close(): Promise<void> {
-    this._pushReceiver.close();
+    if (this._pushReceiver) {
+      this._pushReceiver.close();
+    }
     this._updatingSet.clear();
 
     for (const key of this._futureMap.keys()) {
