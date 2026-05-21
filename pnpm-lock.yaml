@@ -17,6 +17,9 @@ importers:
 
   packages/nacos:
     dependencies:
+      nacos-common:
+        specifier: workspace:*
+        version: link:../nacos-common
       nacos-config:
         specifier: ^2.6.1
         version: 2.6.2
@@ -146,6 +149,9 @@ importers:
       mz-modules:
         specifier: ^2.1.0
         version: 2.1.0
+      nacos-common:
+        specifier: workspace:*
+        version: link:../nacos-common
       sdk-base:
         specifier: ^3.6.0
         version: 3.6.0
