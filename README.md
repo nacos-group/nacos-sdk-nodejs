@@ -1,17 +1,10 @@
 # nacos-sdk-nodejs
 
 [![NPM version][npm-image]][npm-url]
-[![build status][travis-image]][travis-url]
-[![David deps][david-image]][david-url]
 [![lerna](https://img.shields.io/badge/maintained%20with-lerna-cc00ff.svg)](https://lernajs.io/)
 
 [npm-image]: https://img.shields.io/npm/v/nacos.svg?style=flat-square
 [npm-url]: https://npmjs.org/package/nacos
-[travis-image]: https://img.shields.io/travis/nacos-group/nacos-sdk-nodejs.svg?style=flat-square
-[travis-url]: https://travis-ci.org/nacos-group/nacos-sdk-nodejs
-[david-image]: https://img.shields.io/david/nacos-group/nacos-sdk-nodejs.svg?style=flat-square
-[david-url]: https://david-dm.org/nacos-group/nacos-sdk-nodejs
-
 
 [Nacos](https://nacos.io/en-us/) Node.js SDK
 
@@ -21,46 +14,53 @@
 npm install nacos --save
 ```
 
-## Version Mapping
+## Compatibility
 
-Node.js SDK \ Nacos Server | 0.x.0 | 1.0.0 |
----                        |  ---  |  ---  |
-1.x                        |   √   |       |
-2.x                        |       |   √   |
+| Node.js SDK | Nacos Server | Transport |
+|---|---|---|
+| 3.x | 3.x | gRPC (default) |
+| 3.x | 2.x | gRPC (default) / HTTP (opt-in) |
+| 2.x | 2.x / 1.x | HTTP |
+
+> **Note:** Nacos 3.x has removed HTTP API support. When connecting to Nacos 3.x, gRPC is the only available transport.
 
 ## Usage
 
 ### Service Discovery
 
 ```js
-'use strict';
-
-const NacosNamingClient = require('nacos').NacosNamingClient;
-const logger = console;
+const { NacosNamingClient } = require('nacos');
 
 const client = new NacosNamingClient({
-  logger,
-  serverList: '127.0.0.1:8848', // replace to real nacos serverList
+  logger: console,
+  serverList: '127.0.0.1:8848',
   namespace: 'public',
+  // transport: 'http',  // use HTTP API (Nacos 2.x only, removed in 3.x)
+  // username: 'nacos',
+  // password: 'nacos',
 });
 await client.ready();
 
 const serviceName = 'nodejs.test.domain';
 
-// registry instance
+// register instance
 await client.registerInstance(serviceName, {
   ip: '1.1.1.1',
   port: 8080,
 });
-await client.registerInstance(serviceName, {
-  ip: '2.2.2.2',
-  port: 8080,
-});
 
-// subscribe instance
+// subscribe to instance changes (push notification)
 client.subscribe(serviceName, hosts => {
   console.log(hosts);
 });
+
+// query all instances
+const hosts = await client.getAllInstances(serviceName);
+console.log(hosts);
+
+// select healthy instances only
+const healthy = await client.selectInstances(serviceName);
+console.log(healthy);
 
 // deregister instance
 await client.deregisterInstance(serviceName, {
@@ -72,52 +72,53 @@ await client.deregisterInstance(serviceName, {
 ### Config Service
 
 ```js
-import {NacosConfigClient} from 'nacos';   // ts
-const NacosConfigClient = require('nacos').NacosConfigClient; // js
+const { NacosConfigClient } = require('nacos');
 
-// for find address mode
-const configClient = new NacosConfigClient({
-  endpoint: 'acm.aliyun.com',
-  namespace: '***************',
-  accessKey: '***************',
-  secretKey: '***************',
-  requestTimeout: 6000,
-});
-
-// for direct mode
 const configClient = new NacosConfigClient({
   serverAddr: '127.0.0.1:8848',
+  namespace: 'public',
+  // transport: 'http',  // use HTTP API (Nacos 2.x only, removed in 3.x)
+  // username: 'nacos',
+  // password: 'nacos',
 });
-
-// get config once
-const content= await configClient.getConfig('test', 'DEFAULT_GROUP');
-console.log('getConfig = ',content);
-
-// listen data changed
-configClient.subscribe({
-  dataId: 'test',
-  group: 'DEFAULT_GROUP',
-}, content => {
-  console.log(content);
-});
+await configClient.ready();
 
 // publish config
-const content= await configClient.publishSingle('test', 'DEFAULT_GROUP', '测试');
-console.log('getConfig = ',content);
+await configClient.publishSingle('test', 'DEFAULT_GROUP', 'hello=world');
+
+// get config
+const content = await configClient.getConfig('test', 'DEFAULT_GROUP');
+console.log('content:', content);
+
+// subscribe to config changes (push notification)
+configClient.subscribe({ dataId: 'test', group: 'DEFAULT_GROUP' }, content => {
+  console.log('config changed:', content);
+});
 
 // remove config
 await configClient.remove('test', 'DEFAULT_GROUP');
 ```
 
-NacosConfigClient options: [ClientOptions](https://github.com/nacos-group/nacos-sdk-nodejs/blob/master/packages/nacos-config/src/interface.ts#L247)
+## Transport
 
-default value: [ClientOptions default value](https://github.com/nacos-group/nacos-sdk-nodejs/blob/master/packages/nacos-config/src/const.ts#L34)
+The SDK supports two transport protocols:
+
+| Transport | Protocol | Server Version | Description |
+|---|---|---|---|
+| `grpc` (default) | gRPC + Protobuf | Nacos 2.x / 3.x | Bidirectional streaming, server push, connection-based heartbeat |
+| `http` | HTTP REST API | Nacos 2.x only | Long-polling, UDP push, explicit heartbeat |
+
+gRPC advantages over HTTP:
+- **Real-time push** — server pushes service/config changes instantly via bidirectional streaming
+- **No UDP dependency** — service discovery push works without UDP port
+- **Connection heartbeat** — no explicit beat API needed for ephemeral instances
+- **Auto reconnect** — exponential backoff with automatic re-registration and re-subscription
 
 ## APIs
 
 ### Service Discovery
 
-- `registerInstance(serviceName, instance, [groupName])`  Register an instance to service.
+- `registerInstance(serviceName, instance, [groupName])` Register an instance to service.
   - serviceName {String} Service name
   - instance {Instance}
     - ip {String} IP of instance
@@ -125,51 +126,76 @@ default value: [ClientOptions default value](https://github.com/nacos-group/naco
     - [weight] {Number} weight of the instance, default is 1.0
     - [ephemeral] {Boolean} active until the client is alive, default is true
     - [clusterName] {String} Virtual cluster name
+    - [metadata] {Object} Metadata of instance
   - [groupName] {String} group name, default is `DEFAULT_GROUP`
-- `deregisterInstance(serviceName, ip, port, [cluster])`  Delete instance from service.
+- `deregisterInstance(serviceName, instance, [groupName])` Delete instance from service.
   - serviceName {String} Service name
   - instance {Instance}
     - ip {String} IP of instance
     - port {Number} Port of instance
-    - [weight] {Number} weight of the instance, default is 1.0
-    - [ephemeral] {Boolean} active until the client is alive, default is true
-    - [clusterName] {String} Virtual cluster name
   - [groupName] {String} group name, default is `DEFAULT_GROUP`
-- `getAllInstances(serviceName, [groupName], [clusters], [subscribe])`  Query instance list of service.
+- `getAllInstances(serviceName, [groupName], [clusters], [subscribe])` Query instance list of service.
   - serviceName {String} Service name
   - [groupName] {String} group name, default is `DEFAULT_GROUP`
   - [clusters] {String} Cluster names
   - [subscribe] {Boolean} whether subscribe the service, default is true
+- `selectInstances(serviceName, [groupName], [clusters], [healthy], [subscribe])` Select healthy instances of service.
+  - serviceName {String} Service name
+  - [groupName] {String} group name, default is `DEFAULT_GROUP`
+  - [clusters] {String} Cluster names
+  - [healthy] {Boolean} filter healthy instances, default is true
+  - [subscribe] {Boolean} whether subscribe the service, default is true
 - `getServerStatus()` Get the status of nacos server, 'UP' or 'DOWN'.
 - `subscribe(info, listener)` Subscribe the instances of the service
-  - info {Object}|{String} service info, if type is string, it's the serviceName
+  - info {Object|String} service info, if type is string, it's the serviceName
   - listener {Function} the listener function
 - `unSubscribe(info, [listener])` Unsubscribe the instances of the service
-  - info {Object}|{String} service info, if type is string, it's the serviceName
-  - listener {Function} the listener function, if not provide, will unSubscribe all listeners under this service
+  - info {Object|String} service info, if type is string, it's the serviceName
+  - listener {Function} the listener function, if not provided, will unsubscribe all listeners
 
 ### Config Service
 
-- `async function getConfig(dataId, group)`
-  - {String} dataId - data id
-  - {String} group - group name
-- `async function publishSingle(dataId, group, content)`
-  - {String} dataId - data id
-  - {String} group - group name
-  - {String} content - content you want to publish
-- `async function remove(dataId, group)`
-  - {String} dataId - data id
-  - {String} group - group name
-- `function subscribe(info, listener)`
-  - {Object} info
-    - {String} dataId - data id
-    - {String} group - group name
-  - {Function} listener - callback handler
-- `function unSubscribe(info, [listener])`
-  - {Object} info
-    - {String} dataId - data id
-    - {String} group - group
-  - {Function} listener - callback handler（optional，remove all listener when it is null）
+- `getConfig(dataId, group)` Get config content.
+  - dataId {String} data id
+  - group {String} group name
+- `publishSingle(dataId, group, content)` Publish config.
+  - dataId {String} data id
+  - group {String} group name
+  - content {String} content to publish
+- `remove(dataId, group)` Remove config.
+  - dataId {String} data id
+  - group {String} group name
+- `subscribe(info, listener)` Subscribe to config changes.
+  - info {Object} `{ dataId, group }`
+  - listener {Function} callback with new content
+- `unSubscribe(info, [listener])` Unsubscribe from config changes.
+  - info {Object} `{ dataId, group }`
+  - listener {Function} optional, remove all listeners when null
+
+### Client Options
+
+#### NacosNamingClient
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| logger | Object | *required* | Logger instance |
+| serverList | String/String[] | *required* | Nacos server addresses, e.g. `'127.0.0.1:8848'` |
+| namespace | String | `'public'` | Namespace ID |
+| transport | String | `'grpc'` | Transport protocol: `'grpc'` or `'http'` |
+| username | String | | Authentication username |
+| password | String | | Authentication password |
+| ssl | Boolean | `false` | Use TLS/SSL |
+
+#### NacosConfigClient
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| serverAddr | String/String[] | *required* | Nacos server addresses |
+| namespace | String | `'public'` | Namespace ID |
+| transport | String | `'grpc'` | Transport protocol: `'grpc'` or `'http'` |
+| username | String | | Authentication username |
+| password | String | | Authentication password |
+| ssl | Boolean | `false` | Use TLS/SSL |
 
 ## Aliyun RAM Authentication
 
@@ -366,10 +392,6 @@ function createOidcRoleArnProvider(options) {
 Please let us know how can we help. Do check out [issues](https://github.com/nacos-group/nacos-sdk-nodejs/issues) for bug reports or suggestions first.
 
 PR is welcome.
-
-nacos-sdk-nodejs ding group ： 44654232
-![image](https://user-images.githubusercontent.com/17695352/172582005-c661e2a0-49fa-425c-bf99-785bb7cd4dc1.png)
-
 
 ## License
 
