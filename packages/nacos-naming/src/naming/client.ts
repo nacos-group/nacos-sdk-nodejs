@@ -78,6 +78,7 @@ export class NacosNamingClient extends Base {
         logger: options.logger,
         username: options.username,
         password: options.password,
+        labels: { source: 'sdk', module: 'naming' },
       });
 
       this._transportClient = new GrpcTransportClient(this._connection);

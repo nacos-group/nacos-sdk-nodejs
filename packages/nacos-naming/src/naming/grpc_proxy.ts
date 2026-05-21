@@ -27,6 +27,15 @@ import {
   ServiceListResult,
   NamingTransport,
 } from '../interface';
+import { SERVICE_INFO_SPLITER, DEFAULT_GROUP } from '../const';
+
+function splitGroupedName(nameWithGroup: string): { serviceName: string; groupName: string } {
+  if (nameWithGroup.includes(SERVICE_INFO_SPLITER)) {
+    const parts = nameWithGroup.split(SERVICE_INFO_SPLITER);
+    return { groupName: parts[0], serviceName: parts[1] };
+  }
+  return { groupName: DEFAULT_GROUP, serviceName: nameWithGroup };
+}
 
 export class GrpcNamingProxy extends Base implements NamingTransport {
   private _transportClient: GrpcTransportClient;
@@ -40,7 +49,7 @@ export class GrpcNamingProxy extends Base implements NamingTransport {
     assert(options.transportClient, '[GrpcNamingProxy] options.transportClient is required');
     super({ logger: options.logger });
     this._transportClient = options.transportClient;
-    this._namespace = options.namespace || 'public';
+    this._namespace = options.namespace === 'public' ? '' : (options.namespace || '');
     this._logger = options.logger;
     /** Registered instances for reconnect recovery: key → instance */
     this._registeredInstances = new Map();
@@ -62,10 +71,11 @@ export class GrpcNamingProxy extends Base implements NamingTransport {
     const key = `${serviceName}@@${instance.ip}:${instance.port}`;
     this._registeredInstances.set(key, { serviceName, groupName, instance });
 
+    const { serviceName: svc, groupName: grp } = splitGroupedName(serviceName);
     const request = {
       namespace: this._namespace,
-      serviceName,
-      groupName,
+      serviceName: svc,
+      groupName: grp,
       type: 'registerInstance',
       instance: {
         instanceId: instance.instanceId || '',
@@ -91,10 +101,11 @@ export class GrpcNamingProxy extends Base implements NamingTransport {
     const key = `${serviceName}@@${instance.ip}:${instance.port}`;
     this._registeredInstances.delete(key);
 
+    const { serviceName: svc, groupName: grp } = splitGroupedName(serviceName);
     const request = {
       namespace: this._namespace,
-      serviceName,
-      groupName: '',
+      serviceName: svc,
+      groupName: grp,
       type: 'deregisterInstance',
       instance: {
         instanceId: instance.instanceId || '',
@@ -115,18 +126,30 @@ export class GrpcNamingProxy extends Base implements NamingTransport {
   }
 
   async queryList(serviceName: string, clusters: string, udpPort: number, healthyOnly: boolean): Promise<string> {
+    const { serviceName: svc, groupName: grp } = splitGroupedName(serviceName);
     const request = {
       namespace: this._namespace,
-      serviceName,
-      groupName: '',
+      serviceName: svc,
+      groupName: grp,
       cluster: clusters,
       healthyOnly,
       udpPort,
     };
 
-    const response = await this._transportClient.request(request, 'ServiceQueryRequest');
-    // Convert QueryServiceResponse to JSON string for HostReactor compatibility
-    return JSON.stringify(response);
+    const response: any = await this._transportClient.request(request, 'ServiceQueryRequest');
+    // Extract serviceInfo from QueryServiceResponse and return as JSON string
+    // HostReactor.processServiceJSON expects flat structure with hosts at top level
+    const si = response.serviceInfo || {};
+    return JSON.stringify({
+      name: si.name || serviceName,
+      dom: si.name || serviceName,
+      groupName: si.groupName || '',
+      clusters: si.clusters || clusters,
+      cacheMillis: si.cacheMillis || 10000,
+      hosts: si.hosts || [],
+      lastRefTime: si.lastRefTime || Date.now(),
+      checksum: si.checksum || '',
+    });
   }
 
   /**

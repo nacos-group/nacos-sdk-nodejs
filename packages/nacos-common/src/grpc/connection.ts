@@ -1,5 +1,7 @@
 import { EventEmitter } from 'events';
 import * as path from 'path';
+import * as http from 'http';
+import * as https from 'https';
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import * as crypto from 'crypto';
@@ -45,6 +47,7 @@ export class GrpcConnection extends EventEmitter {
   private connected: boolean = false;
   private closed: boolean = false;
   private currentServerIndex: number = 0;
+  private accessToken: string = '';
 
   private requestClient: any = null;
   private biStreamClient: any = null;
@@ -62,6 +65,56 @@ export class GrpcConnection extends EventEmitter {
     super();
     this.options = options;
     this.codec = new PayloadCodec();
+  }
+
+  private async login(): Promise<void> {
+    const { username, password } = this.options;
+    if (!username || !password) return;
+
+    const serverAddr = this.options.serverList[this.currentServerIndex % this.options.serverList.length];
+    const { host, port } = parseServerAddress(serverAddr);
+    const postData = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+    const protocol = this.options.ssl ? https : http;
+
+    return new Promise<void>((resolve, reject) => {
+      const req = protocol.request({
+        hostname: host,
+        port,
+        path: '/nacos/v1/auth/login',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Length': Buffer.byteLength(postData),
+        },
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            this.accessToken = json.accessToken || '';
+            this.options.logger.info('[GrpcConnection] Login succeeded, got accessToken');
+            resolve();
+          } catch (e) {
+            this.options.logger.warn('[GrpcConnection] Login response parse failed: %s', data);
+            resolve();
+          }
+        });
+      });
+      req.on('error', (e) => {
+        this.options.logger.warn('[GrpcConnection] Login request failed: %s', e.message);
+        resolve();
+      });
+      req.write(postData);
+      req.end();
+    });
+  }
+
+  getAuthHeaders(): Record<string, string> {
+    if (this.accessToken) {
+      return { accessToken: this.accessToken };
+    }
+    return {};
   }
 
   private loadProto(): any {
@@ -94,8 +147,13 @@ export class GrpcConnection extends EventEmitter {
       ? grpc.credentials.createSsl()
       : grpc.credentials.createInsecure();
 
+    // Create Request client first, then share its channel with BiRequestStream.
+    // This ensures both services use the same HTTP/2 connection,
+    // which is required for the server to match the connectionId.
     this.requestClient = new RequestService(target, credentials);
-    this.biStreamClient = new BiRequestStreamService(target, credentials);
+    this.biStreamClient = new BiRequestStreamService(target, credentials, {
+      channelOverride: this.requestClient.getChannel(),
+    } as any);
   }
 
   private sendUnary(payload: Payload): Promise<Payload> {
@@ -117,15 +175,18 @@ export class GrpcConnection extends EventEmitter {
 
   private async performHandshake(): Promise<void> {
     const logger = this.options.logger;
-    const { host, port } = this.getCurrentServer();
 
+    await this.login();
+
+    const { host, port } = this.getCurrentServer();
     logger.info('[GrpcConnection] Connecting to %s:%d', host, port);
     this.createClients(host, port);
 
     // Step 1: ServerCheck
     const serverCheckReq = this.codec.encode(
       { requestId: generateRequestId() },
-      'ServerCheckRequest'
+      'ServerCheckRequest',
+      this.getAuthHeaders()
     );
 
     const serverCheckResp = await this.sendUnary(serverCheckReq);
@@ -146,8 +207,7 @@ export class GrpcConnection extends EventEmitter {
       {
         requestId: generateRequestId(),
         clientVersion: '2.0.0',
-        tenant: this.options.namespace || '',
-        namespace: this.options.namespace || '',
+        tenant: this.options.namespace === 'public' ? '' : (this.options.namespace || ''),
         labels: this.options.labels || {},
         clientAbilities: {
           remoteAbility: {
@@ -163,7 +223,8 @@ export class GrpcConnection extends EventEmitter {
         },
         abilityTable: this.options.abilityTable || {},
       },
-      'ConnectionSetupRequest'
+      'ConnectionSetupRequest',
+      this.getAuthHeaders()
     );
 
     this.biStream.write(setupReq);
@@ -194,6 +255,9 @@ export class GrpcConnection extends EventEmitter {
         }
       }
     });
+
+    // Wait for server to process ConnectionSetupRequest
+    await sleep(500);
 
     this.connected = true;
     this.reconnectBackoff = 1000;

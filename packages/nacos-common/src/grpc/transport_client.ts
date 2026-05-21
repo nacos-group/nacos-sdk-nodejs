@@ -56,7 +56,7 @@ export class GrpcTransportClient {
 
   async request<Res = any>(message: any, requestType: string, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<Res> {
     const requestId = generateRequestId();
-    const payload = this.codec.encode({ ...message, requestId }, requestType);
+    const payload = this.codec.encode({ ...message, requestId }, requestType, this.connection.getAuthHeaders());
 
     const responsePayload = await this.connection.request(payload);
     const decoded = this.codec.decode(responsePayload);
@@ -72,7 +72,7 @@ export class GrpcTransportClient {
 
   async streamRequest<Res = any>(message: any, requestType: string, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<Res> {
     const requestId = generateRequestId();
-    const payload = this.codec.encode({ ...message, requestId }, requestType);
+    const payload = this.codec.encode({ ...message, requestId }, requestType, this.connection.getAuthHeaders());
 
     return new Promise<Res>((resolve, reject) => {
       const timer = setTimeout(() => {
