@@ -258,43 +258,80 @@ export interface SnapShotData {
 }
 
 export interface ClientOptions {
-  endpoint?: string;          // 寻址模式下的对端 host
-  serverPort?: number;        // 对端端口
-  namespace?: string;         // 阿里云的 namespace
-  accessKey?: string;         // 阿里云的 accessKey
-  secretKey?: string;         // 阿里云的 secretKey
-  securityToken?: string;     // 阿里云的 STS securityToken
-  alibabaCloudAccessKeyId?: string;     // 阿里云扩展鉴权 AccessKeyId
-  alibabaCloudAccessKeySecret?: string; // 阿里云扩展鉴权 AccessKeySecret
-  alibabaCloudSecurityToken?: string;   // 阿里云扩展鉴权 SecurityToken
-  alibabaCloudCredentialsUri?: string;  // 阿里云扩展鉴权 Credentials URI
-  securityCredentials?: string | object; // STS 临时凭证 JSON
-  securityCredentialsUrl?: string;      // STS 临时凭证获取 URL
-  ramRoleName?: string;                 // ECS RAM role name
-  cacheSecurityCredentials?: boolean;   // 是否缓存 STS 临时凭证
-  timeToRefreshInMillisecond?: number;  // STS 临时凭证刷新提前量
-  aliyunCredentialsProvider?: any;      // 自定义阿里云凭证 Provider
-  alibabaCloudCredentialsProvider?: any; // 自定义阿里云扩展凭证 Provider
-  signatureRegionId?: string;           // 阿里云 v4 签名 regionId
-  httpclient?: any;           // http 请求客户端，默认为 urllib
-  httpAgent?: any;            // httpAgent
-  appName?: string;           // 应用名，可选
-  ssl?: boolean;              // 是否为 https 请求
-  refreshInterval?: number;   // 重新拉取地址列表的间隔时间
-  contextPath?: string;       // 请求的 contextPath
-  clusterName?: string;       // 请求的 path
-  requestTimeout?: number;    // 请求超时时间
-  defaultEncoding?: string;   // 请求编码
-  serverAddr?: string | string[];        // 用于直连，包含端口，支持单个地址或地址数组
-  unit?: string;              // 内部单元化用
-  nameServerAddr?: string;    // 老的兼容参数，逐步废弃，同 endpoint
-  username?: string;          // 认证的用户名
-  password?: string;          // 认证的密码
-  cacheDir?: string;          // 缓存文件的路径
-  identityKey?: string;       // Identity Key
-  identityValue?: string;     // Identity Value
-  endpointQueryParams?: string; // endPoint 查询参数 e.g: param_1=1&param_2=2
-  decodeRes?: (res: any, method?: string, encoding?: string) => any
+  /** Endpoint host for address discovery mode */
+  endpoint?: string;
+  /** Server port (default: 8848) */
+  serverPort?: number;
+  /** Alibaba Cloud namespace */
+  namespace?: string;
+  /** Alibaba Cloud access key */
+  accessKey?: string;
+  /** Alibaba Cloud secret key */
+  secretKey?: string;
+  /** Alibaba Cloud STS security token */
+  securityToken?: string;
+  /** Alibaba Cloud extended auth AccessKeyId */
+  alibabaCloudAccessKeyId?: string;
+  /** Alibaba Cloud extended auth AccessKeySecret */
+  alibabaCloudAccessKeySecret?: string;
+  /** Alibaba Cloud extended auth SecurityToken */
+  alibabaCloudSecurityToken?: string;
+  /** Alibaba Cloud extended auth Credentials URI */
+  alibabaCloudCredentialsUri?: string;
+  /** STS temporary credentials JSON */
+  securityCredentials?: string | object;
+  /** STS temporary credentials fetch URL */
+  securityCredentialsUrl?: string;
+  /** ECS RAM role name */
+  ramRoleName?: string;
+  /** Whether to cache STS temporary credentials */
+  cacheSecurityCredentials?: boolean;
+  /** Refresh-ahead time (ms) for STS temporary credentials */
+  timeToRefreshInMillisecond?: number;
+  /** Custom Alibaba Cloud credential provider */
+  aliyunCredentialsProvider?: any;
+  /** Custom Alibaba Cloud extended credential provider */
+  alibabaCloudCredentialsProvider?: any;
+  /** Alibaba Cloud v4 signature region ID */
+  signatureRegionId?: string;
+  /** HTTP request client, defaults to urllib */
+  httpclient?: any;
+  /** HTTP agent */
+  httpAgent?: any;
+  /** Application name (optional) */
+  appName?: string;
+  /** Whether to use HTTPS */
+  ssl?: boolean;
+  /** Interval (ms) to re-fetch the server address list */
+  refreshInterval?: number;
+  /** Request context path */
+  contextPath?: string;
+  /** Server list cluster name */
+  clusterName?: string;
+  /** Request timeout in milliseconds */
+  requestTimeout?: number;
+  /** Request encoding (default: utf8) */
+  defaultEncoding?: string;
+  /** Direct server address (with port); supports a single address or an array of addresses */
+  serverAddr?: string | string[];
+  /** Internal unit identifier */
+  unit?: string;
+  /** Legacy alias for endpoint; will be deprecated */
+  nameServerAddr?: string;
+  /** Authentication username */
+  username?: string;
+  /** Authentication password */
+  password?: string;
+  /** Directory path for local snapshot cache */
+  cacheDir?: string;
+  /** Custom identity header key */
+  identityKey?: string;
+  /** Custom identity header value */
+  identityValue?: string;
+  /** Extra query parameters appended to the endpoint URL, e.g. "param_1=1&param_2=2" */
+  endpointQueryParams?: string;
+  /** Custom response decoder */
+  decodeRes?: (res: any, method?: string, encoding?: string) => any;
 }
 
 export enum ClientOptionKeys {
