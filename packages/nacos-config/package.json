@@ -9,6 +9,7 @@
   "main": "dist/index.js",
   "author": "czy88840616@gmail.com",
   "dependencies": {
+    "nacos-common": "workspace:*",
     "cluster-client": "^2.1.1",
     "co-gather": "^1.0.0",
     "debug": "^3.1.0",

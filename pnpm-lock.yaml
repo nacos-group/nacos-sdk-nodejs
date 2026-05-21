@@ -107,6 +107,9 @@ importers:
       mz-modules:
         specifier: ^2.1.0
         version: 2.1.0
+      nacos-common:
+        specifier: workspace:*
+        version: link:../nacos-common
       osenv:
         specifier: ^0.1.5
         version: 0.1.5

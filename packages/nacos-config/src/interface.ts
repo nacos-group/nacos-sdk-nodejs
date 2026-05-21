@@ -332,6 +332,8 @@ export interface ClientOptions {
   endpointQueryParams?: string;
   /** Custom response decoder */
   decodeRes?: (res: any, method?: string, encoding?: string) => any;
+  /** Transport protocol: 'grpc' uses gRPC, 'http' uses HTTP long-polling (default: 'http') */
+  transport?: 'grpc' | 'http';
 }
 
 export enum ClientOptionKeys {
