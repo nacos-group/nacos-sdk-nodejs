@@ -60,6 +60,9 @@ importers:
       '@grpc/proto-loader':
         specifier: ^0.7.0
         version: 0.7.15
+      address:
+        specifier: ^1.2.2
+        version: 1.2.2
     devDependencies:
       '@types/mocha':
         specifier: ^5.2.5
