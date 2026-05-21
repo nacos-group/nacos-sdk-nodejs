@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  unit-test:
+    name: Unit Tests (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm -r run build
+      - name: Run unit tests (nacos-common)
+        working-directory: packages/nacos-common
+        run: npx midway-bin test --ts -- --file test/grpc/payload_codec.test.ts --timeout 30000
+      - name: Run unit tests (nacos-naming)
+        working-directory: packages/nacos-naming
+        run: npx midway-bin test --ts -- --file test/naming/instance.test.ts --file test/naming/service_info.test.ts --file test/util/index.test.ts --timeout 30000
+
+  integration-grpc:
+    name: Integration Tests (gRPC + Nacos 3.x)
+    runs-on: ubuntu-latest
+    services:
+      nacos:
+        image: nacos/nacos-server:v3.2.0
+        env:
+          MODE: standalone
+          NACOS_AUTH_ENABLE: "true"
+          NACOS_AUTH_TOKEN: SecretKey012345678901234567890123456789012345678901234567890123456789
+          NACOS_AUTH_IDENTITY_KEY: serverIdentity
+          NACOS_AUTH_IDENTITY_VALUE: security
+        ports:
+          - 8848:8848
+          - 9848:9848
+        options: >-
+          --health-cmd "curl -f http://localhost:8848/nacos/ || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+          --health-start-period 30s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm -r run build
+      - name: Wait for Nacos 3.x to be ready
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8848/nacos/ && break || sleep 2
+          done
+      - name: Naming gRPC tests
+        working-directory: packages/nacos-naming
+        run: npx midway-bin test --ts -- --file test/naming/grpc_proxy.test.ts --timeout 60000
+      - name: Config gRPC tests
+        working-directory: packages/nacos-config
+        run: npx midway-bin test --ts -- --file test/grpc_config_proxy.test.ts --timeout 60000
+
+  integration-http:
+    name: Integration Tests (HTTP + Nacos 2.x)
+    runs-on: ubuntu-latest
+    services:
+      nacos:
+        image: nacos/nacos-server:v2.5.2
+        env:
+          MODE: standalone
+          NACOS_AUTH_ENABLE: "false"
+        ports:
+          - 8848:8848
+          - 9848:9848
+        options: >-
+          --health-cmd "curl -f http://localhost:8848/nacos/v1/ns/operator/metrics || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+          --health-start-period 30s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm -r run build
+      - name: Wait for Nacos 2.x to be ready
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8848/nacos/v1/ns/operator/metrics && break || sleep 2
+          done
+      - name: Naming HTTP tests
+        working-directory: packages/nacos-naming
+        run: npx midway-bin test --ts -- --file test/naming/proxy.test.ts --file test/naming/push_receiver.test.ts --timeout 60000
