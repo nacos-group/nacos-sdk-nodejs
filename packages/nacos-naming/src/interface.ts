@@ -83,6 +83,8 @@ export interface NacosNamingClientOptions {
   username?: string;
   /** Password for authentication */
   password?: string;
+  /** Transport protocol to use: 'grpc' (default) or 'http' */
+  transport?: 'grpc' | 'http';
 }
 
 /** Heartbeat data */
