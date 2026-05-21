@@ -2,45 +2,24 @@
   "name": "nacos-naming",
   "version": "2.6.3",
   "description": "nacos (https://nacos.io/en-us/) nodejs sdk",
-  "main": "index.js",
-  "files": [
-    "lib",
-    "index.js",
-    "index.d.ts"
-  ],
+  "main": "dist/index.js",
+  "files": ["d.ts", "dist", "src"],
   "scripts": {
-    "autod": "autod",
-    "lint": "eslint . --ext .js",
-    "cov": "TEST_TIMEOUT=20000 egg-bin cov",
-    "test": "npm run lint && npm run test-local",
-    "test-local": "egg-bin test",
-    "pkgfiles": "egg-bin pkgfiles --check",
-    "ci": "npm run autod -- --check && npm run pkgfiles && npm run lint && npm run cov",
+    "lint": "tslint . --ext .ts",
+    "test": "npm run test-local",
+    "test-local": "TEST_REPORTER=spec midway-bin test --ts",
+    "cov": "TEST_REPORTER=spec midway-bin cov --ts",
+    "ci": "npm run lint && npm run cov",
+    "build": "midway-bin build --ts",
     "contributors": "contributors -f plain -o AUTHORS"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/nacos-group/nacos-sdk-nodejs.git"
-  },
-  "keywords": [
-    "nacos",
-    "cloud",
-    "native",
-    "eggjs"
-  ],
+  "repository": { "type": "git", "url": "git+https://github.com/nacos-group/nacos-sdk-nodejs.git" },
+  "keywords": ["nacos", "cloud", "native", "eggjs"],
   "author": "gxcsoccer <gxcsoccer@126.com>",
   "license": "Apache",
-  "bugs": {
-    "url": "https://github.com/nacos-group/nacos-sdk-nodejs/issues"
-  },
+  "bugs": { "url": "https://github.com/nacos-group/nacos-sdk-nodejs/issues" },
   "homepage": "https://github.com/nacos-group/nacos-sdk-nodejs#readme",
-  "engines": {
-    "node": ">= 8.0.0"
-  },
-  "ci": {
-    "type": "travis",
-    "version": "8, 10, 12"
-  },
+  "engines": { "node": ">= 8.0.0" },
   "dependencies": {
     "address": "^1.1.0",
     "equals": "^1.0.5",
@@ -51,14 +30,14 @@
     "uuid": "^3.3.2"
   },
   "devDependencies": {
-    "autod": "^3.1.0",
+    "@types/mocha": "^5.2.5",
+    "@types/node": "^10.9.4",
     "await-event": "^2.1.0",
     "contributors": "^0.5.1",
-    "egg-bin": "^4.13.1",
-    "egg-ci": "^1.11.0",
-    "eslint": "^5.16.0",
-    "eslint-config-egg": "^7.3.1",
+    "midway-bin": "1",
     "mm": "^2.5.0",
-    "mz-modules": "^2.1.0"
+    "mz-modules": "^2.1.0",
+    "tslint": "^5.11.0",
+    "typescript": "^3.2.2"
   }
 }

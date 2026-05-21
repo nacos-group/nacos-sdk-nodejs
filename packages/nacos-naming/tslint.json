@@ -1,0 +1,13 @@
+{
+  "rules": {
+    "jsdoc-format": true,
+    "class-name": true,
+    "comment-format": [true, "check-space"],
+    "indent": [true, "spaces"],
+    "no-eval": true,
+    "no-var-keyword": true,
+    "quotemark": [true, "single", "avoid-escape"],
+    "semicolon": [true, "always"],
+    "triple-equals": [true, "allow-null-check"]
+  }
+}
