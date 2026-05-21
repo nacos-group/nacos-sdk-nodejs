@@ -110,7 +110,7 @@ export interface ServiceInfoData {
   clusters?: string;
   allIPs?: boolean;
   cacheMillis?: number;
-  hosts?: Host[];
+  hosts?: any[];
   lastRefTime?: number;
   checksum?: string;
 }

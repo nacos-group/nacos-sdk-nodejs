@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { ServiceInfoData, Host } from '../interface';
+import { ServiceInfoData } from '../interface';
 import { DEFAULT_DELAY } from '../const';
 
 const EMPTY = '';
@@ -27,7 +27,7 @@ export class ServiceInfo {
   clusters?: string;
   isAllIPs: boolean;
   cacheMillis: number;
-  hosts: Host[];
+  hosts: any[];
   lastRefTime: number;
   checksum: string;
   jsonFromServer: string;
