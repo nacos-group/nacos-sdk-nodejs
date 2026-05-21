@@ -14,9 +14,12 @@ const { NacosConfigClient } = require('nacos');
 const sleep = require('mz-modules/sleep');
 
 async function main() {
+  // Default transport is gRPC (recommended for Nacos 2.x/3.x).
+  // For Nacos 2.x with HTTP, uncomment the transport line below.
   const configClient = new NacosConfigClient({
     serverAddr: '127.0.0.1:8848',
     namespace: 'public',
+    // transport: 'http',  // use HTTP API (Nacos 2.x only, removed in 3.x)
     // username: 'nacos',
     // password: 'nacos',
   });
