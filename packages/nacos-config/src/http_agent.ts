@@ -143,10 +143,10 @@ export class HttpAgent {
     Object.assign(headers, {
       'Client-Version': VERSION,
       'Content-Type': 'application/x-www-form-urlencoded; charset=utf8',
-      'Spas-AccessKey': this.accessKey,
+      ...(this.accessKey ? { 'Spas-AccessKey': this.accessKey } : {}),
       timeStamp: ts,
       exConfigInfo: 'true',
-      'Spas-Signature': signature,
+      ...(this.secretKey ? { 'Spas-Signature': signature } : {}),
       ...this.identityKey ? {[this.identityKey]: this.identityValue} : {}
     });
 
