@@ -75,4 +75,46 @@ describe('test/grpc_config_proxy.test.ts', () => {
     const content = await proxy.getConfig(dataId, group);
     assert(content === '', `getConfig after remove should return empty, got: ${content}`);
   });
+
+  it('should listen for config changes via gRPC', async function() {
+    this.timeout(30000);
+    const listenDataId = 'nodejs.grpc.listen.test';
+
+    // Publish initial config
+    await proxy.publishSingle(listenDataId, group, 'public', 'initial=value');
+    await sleep(500);
+
+    // Get initial MD5
+    const initial = await proxy.getConfig(listenDataId, group);
+    assert(initial === 'initial=value');
+
+    // Listen for changes
+    const changes: any[] = [];
+    proxy.on('configChanged', (evt: any) => {
+      if (evt.dataId === listenDataId) {
+        changes.push(evt);
+      }
+    });
+
+    const crypto = require('crypto');
+    const md5 = crypto.createHash('md5').update('initial=value').digest('hex');
+    await proxy.addListener(listenDataId, group, md5);
+    console.log('[TEST] listener added with md5:', md5);
+
+    await sleep(1000);
+
+    // Update config to trigger change notification
+    await proxy.publishSingle(listenDataId, group, 'public', 'updated=value');
+    console.log('[TEST] config updated, waiting for push...');
+
+    await sleep(5000);
+
+    console.log('[TEST] config changes received:', changes.length);
+    assert(changes.length > 0, `Should receive at least 1 config change event, got: ${changes.length}`);
+    assert(changes[0].dataId === listenDataId);
+
+    // Cleanup
+    await proxy.removeListener(listenDataId, group);
+    await proxy.remove(listenDataId, group);
+  });
 });

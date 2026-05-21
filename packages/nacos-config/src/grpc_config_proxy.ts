@@ -95,7 +95,7 @@ export class GrpcConfigProxy extends Base {
       configListenContexts,
     };
     try {
-      await this._transportClient.streamRequest(request, 'ConfigBatchListenRequest');
+      await this._transportClient.request(request, 'ConfigBatchListenRequest');
     } catch (err) {
       this._logger.error('[GrpcConfigProxy] ConfigBatchListenRequest failed: %s', err.message);
       throw err;
