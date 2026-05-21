@@ -33,7 +33,7 @@ describe('test/naming/grpc_proxy.test.ts', () => {
     this.timeout(10000);
     connection = new GrpcConnection({
       serverList: ['127.0.0.1:8848'],
-      namespace: 'public',
+      namespace: 'public',  // Nacos 3.x default namespace ID
       username: 'nacos',
       password: 'nacos',
       logger,
@@ -51,7 +51,7 @@ describe('test/naming/grpc_proxy.test.ts', () => {
     transportClient = new GrpcTransportClient(connection);
     proxy = new GrpcNamingProxy({
       transportClient,
-      namespace: 'public',
+      namespace: 'public',  // Nacos 3.x default namespace ID
       logger,
     });
     await proxy.ready();

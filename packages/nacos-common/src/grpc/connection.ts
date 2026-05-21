@@ -207,7 +207,7 @@ export class GrpcConnection extends EventEmitter {
       {
         requestId: generateRequestId(),
         clientVersion: '2.0.0',
-        tenant: this.options.namespace === 'public' ? '' : (this.options.namespace || ''),
+        tenant: this.options.namespace || 'public',
         labels: this.options.labels || {},
         clientAbilities: {
           remoteAbility: {

@@ -49,7 +49,7 @@ export class GrpcNamingProxy extends Base implements NamingTransport {
     assert(options.transportClient, '[GrpcNamingProxy] options.transportClient is required');
     super({ logger: options.logger });
     this._transportClient = options.transportClient;
-    this._namespace = options.namespace === 'public' ? '' : (options.namespace || '');
+    this._namespace = options.namespace || 'public';
     this._logger = options.logger;
     /** Registered instances for reconnect recovery: key → instance */
     this._registeredInstances = new Map();
