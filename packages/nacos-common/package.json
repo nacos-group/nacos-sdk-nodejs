@@ -9,7 +9,7 @@
     "@grpc/grpc-js": "^1.9.0"
   },
   "optionalDependencies": {
-    "@nacos-group/nacos-sdk-proto": "^1.0.0"
+    "@nacos-group/sdk-proto": "^1.0.0-beta.7"
   },
   "devDependencies": {
     "@types/mocha": "^5.2.5",

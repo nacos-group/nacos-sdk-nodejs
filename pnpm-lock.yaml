@@ -73,6 +73,10 @@ importers:
       typescript:
         specifier: ^3.2.2
         version: 3.9.10
+    optionalDependencies:
+      '@nacos-group/sdk-proto':
+        specifier: ^1.0.0-beta.7
+        version: 1.0.0-beta.7
 
   packages/nacos-config:
     dependencies:
@@ -660,6 +664,10 @@ packages:
   '@mrmlnc/readdir-enhanced@2.2.1':
     resolution: {integrity: sha512-bPHp6Ji8b41szTOcaP63VlnbbO5Ny6dwAATtY6JTjh5N2OLrb5Qk/Th5cRkRQhkWCt+EJsYrNB0MiL+Gpn6e3g==}
     engines: {node: '>=4'}
+
+  '@nacos-group/sdk-proto@1.0.0-beta.7':
+    resolution: {integrity: sha512-x48byncHHWSx7rx5PgauSuFSeE8KHXgWmgbZpq0vxphLt57r3yLTvGqllhFZ+MXJtlj9xiH8jPCiY+9wpjQV0Q==}
+    engines: {node: '>=18'}
 
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
@@ -5772,6 +5780,11 @@ snapshots:
     dependencies:
       call-me-maybe: 1.0.2
       glob-to-regexp: 0.3.0
+
+  '@nacos-group/sdk-proto@1.0.0-beta.7':
+    dependencies:
+      '@grpc/grpc-js': 1.14.4
+    optional: true
 
   '@nodelib/fs.scandir@2.1.5':
     dependencies:
