@@ -59,10 +59,11 @@ jobs:
             echo "Attempt $i: not ready yet..."
             sleep 3
           done
-          echo "Performing initial login to initialize auth..."
+          echo "Initializing admin user..."
           sleep 5
+          curl -sf -X POST 'http://127.0.0.1:8080/v3/auth/user/admin' -d 'password=nacos' || true
+          echo "Verifying login..."
           curl -sf -X POST 'http://127.0.0.1:8848/nacos/v1/auth/login' -d 'username=nacos&password=nacos' || true
-          curl -sf -X POST 'http://127.0.0.1:8080/v3/auth/user/login' -d 'username=nacos&password=nacos' || true
           echo "Waiting for gRPC port..."
           sleep 10
           echo "Proceeding with tests"
