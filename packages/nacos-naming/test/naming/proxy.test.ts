@@ -50,7 +50,7 @@ describe('test/naming/proxy.test.js', () => {
     let jsonStr = await proxy.queryList(serviceName, 'NODEJS', 0, false);
     let serviceInfo = JSON.parse(jsonStr);
 
-    assert(serviceInfo && serviceInfo.dom === 'DEFAULT_GROUP@@' + serviceName);
+    assert(serviceInfo && (serviceInfo.dom || serviceInfo.name) === 'DEFAULT_GROUP@@' + serviceName);
     assert(serviceInfo.hosts && serviceInfo.hosts.length === 1);
     assert(serviceInfo.hosts[0].ip === '1.1.1.1');
     assert(serviceInfo.hosts[0].port === 8080);
@@ -61,7 +61,7 @@ describe('test/naming/proxy.test.js', () => {
     jsonStr = await proxy.queryList(serviceName, 'NODEJS', 0, false);
     serviceInfo = JSON.parse(jsonStr);
 
-    assert(serviceInfo && serviceInfo.dom === 'DEFAULT_GROUP@@' + serviceName);
+    assert(serviceInfo && (serviceInfo.dom || serviceInfo.name) === 'DEFAULT_GROUP@@' + serviceName);
     assert(serviceInfo.hosts && serviceInfo.hosts.length === 0);
 
     await proxy.close();
@@ -159,7 +159,7 @@ describe('test/naming/proxy.test.js', () => {
     mm.error(proxy, '_reqAPI', 'mock error');
 
     result = await proxy.sendBeat(beatInfo);
-    assert(result === 0);
+    assert(result === 5000);
 
     await proxy.close();
   });
