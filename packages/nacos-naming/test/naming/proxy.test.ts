@@ -58,6 +58,8 @@ describe('test/naming/proxy.test.js', () => {
     result = await proxy.deregisterService(serviceName, instance);
     assert(result === 'ok');
 
+    await sleep(2000);
+
     jsonStr = await proxy.queryList(serviceName, 'NODEJS', 0, false);
     serviceInfo = JSON.parse(jsonStr);
 
