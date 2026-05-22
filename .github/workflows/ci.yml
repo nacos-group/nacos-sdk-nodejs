@@ -34,23 +34,31 @@ jobs:
   integration-grpc:
     name: Integration Tests (gRPC + Nacos 3.x)
     runs-on: ubuntu-latest
-    services:
-      nacos:
-        image: nacos/nacos-server:v3.2.0
-        env:
-          MODE: standalone
-          NACOS_AUTH_ENABLE: "false"
-        ports:
-          - 8848:8848
-          - 9848:9848
-        options: >-
-          --health-cmd "curl -f http://localhost:8848/nacos/ || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 60
-          --health-start-period 60s
     steps:
       - uses: actions/checkout@v4
+      - name: Start Nacos 3.x
+        run: |
+          docker run -d --name nacos3 \
+            -e MODE=standalone \
+            -e NACOS_AUTH_ENABLE=true \
+            -e NACOS_AUTH_TOKEN=SecretKey012345678901234567890123456789012345678901234567890123456789 \
+            -e NACOS_AUTH_IDENTITY_KEY=serverIdentity \
+            -e NACOS_AUTH_IDENTITY_VALUE=security \
+            -p 8848:8848 \
+            -p 9848:9848 \
+            nacos/nacos-server:v3.2.0
+      - name: Wait for Nacos 3.x to be ready
+        run: |
+          echo "Waiting for Nacos 3.x..."
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8848/nacos/ > /dev/null 2>&1; then
+              echo "Nacos 3.x is ready (attempt $i)"
+              break
+            fi
+            echo "Attempt $i: not ready yet..."
+            sleep 3
+          done
+          sleep 5
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -60,38 +68,41 @@ jobs:
           cache: pnpm
       - run: pnpm install
       - run: pnpm -r run build
-      - name: Wait for Nacos 3.x to be ready
-        run: |
-          for i in $(seq 1 30); do
-            curl -sf http://127.0.0.1:8848/nacos/ && break || sleep 2
-          done
       - name: Naming gRPC tests
         working-directory: packages/nacos-naming
         run: npx midway-bin test --ts -- --file test/naming/grpc_proxy.test.ts --timeout 60000
       - name: Config gRPC tests
         working-directory: packages/nacos-config
         run: npx midway-bin test --ts -- --file test/grpc_config_proxy.test.ts --timeout 60000
+      - name: Show Nacos logs on failure
+        if: failure()
+        run: docker logs nacos3 --tail 100
 
   integration-http:
     name: Integration Tests (HTTP + Nacos 2.x)
     runs-on: ubuntu-latest
-    services:
-      nacos:
-        image: nacos/nacos-server:v2.5.2
-        env:
-          MODE: standalone
-          NACOS_AUTH_ENABLE: "false"
-        ports:
-          - 8848:8848
-          - 9848:9848
-        options: >-
-          --health-cmd "curl -f http://localhost:8848/nacos/v1/ns/operator/metrics || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 60
-          --health-start-period 60s
     steps:
       - uses: actions/checkout@v4
+      - name: Start Nacos 2.x
+        run: |
+          docker run -d --name nacos2 \
+            -e MODE=standalone \
+            -e NACOS_AUTH_ENABLE=false \
+            -p 8848:8848 \
+            -p 9848:9848 \
+            nacos/nacos-server:v2.5.2
+      - name: Wait for Nacos 2.x to be ready
+        run: |
+          echo "Waiting for Nacos 2.x..."
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8848/nacos/v1/ns/operator/metrics > /dev/null 2>&1; then
+              echo "Nacos 2.x is ready (attempt $i)"
+              break
+            fi
+            echo "Attempt $i: not ready yet..."
+            sleep 3
+          done
+          sleep 5
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -101,11 +112,9 @@ jobs:
           cache: pnpm
       - run: pnpm install
       - run: pnpm -r run build
-      - name: Wait for Nacos 2.x to be ready
-        run: |
-          for i in $(seq 1 30); do
-            curl -sf http://127.0.0.1:8848/nacos/v1/ns/operator/metrics && break || sleep 2
-          done
       - name: Naming HTTP tests
         working-directory: packages/nacos-naming
         run: npx midway-bin test --ts -- --file test/naming/proxy.test.ts --file test/naming/push_receiver.test.ts --timeout 60000
+      - name: Show Nacos logs on failure
+        if: failure()
+        run: docker logs nacos2 --tail 100
