@@ -40,22 +40,27 @@ jobs:
         run: |
           docker run -d --name nacos3 \
             -e MODE=standalone \
-            -e NACOS_AUTH_ENABLE=false \
+            -e NACOS_AUTH_ENABLE=true \
+            -e NACOS_AUTH_TOKEN=SecretKey012345678901234567890123456789012345678901234567890123456789 \
+            -e NACOS_AUTH_IDENTITY_KEY=serverIdentity \
+            -e NACOS_AUTH_IDENTITY_VALUE=security \
+            -p 8080:8080 \
             -p 8848:8848 \
             -p 9848:9848 \
             nacos/nacos-server:v3.2.0
       - name: Wait for Nacos 3.x to be ready
         run: |
-          echo "Waiting for Nacos 3.x..."
-          for i in $(seq 1 60); do
+          echo "Waiting for Nacos 3.x HTTP + gRPC..."
+          for i in $(seq 1 90); do
             if curl -sf http://127.0.0.1:8848/nacos/ > /dev/null 2>&1; then
-              echo "Nacos 3.x is ready (attempt $i)"
+              echo "Nacos 3.x HTTP ready (attempt $i), waiting for gRPC..."
+              sleep 10
+              echo "Proceeding with tests"
               break
             fi
             echo "Attempt $i: not ready yet..."
             sleep 3
           done
-          sleep 5
       - uses: pnpm/action-setup@v4
         with:
           version: 10
