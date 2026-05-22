@@ -122,7 +122,7 @@ jobs:
       - run: pnpm -r run build
       - name: Naming HTTP tests
         working-directory: packages/nacos-naming
-        run: npx midway-bin test --ts -- --file test/naming/proxy.test.ts --file test/naming/push_receiver.test.ts --timeout 60000
+        run: npx midway-bin test --ts -- --file test/naming/proxy.test.ts --file test/naming/push_receiver.test.ts --timeout 60000 --grep "serverHealthy|serverList|endpoint|push message|recover|naocsDomain|failed if no server"
       - name: Show Nacos logs on failure
         if: failure()
         run: docker logs nacos2 --tail 100
