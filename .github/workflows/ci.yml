@@ -40,10 +40,7 @@ jobs:
         run: |
           docker run -d --name nacos3 \
             -e MODE=standalone \
-            -e NACOS_AUTH_ENABLE=true \
-            -e NACOS_AUTH_TOKEN=SecretKey012345678901234567890123456789012345678901234567890123456789 \
-            -e NACOS_AUTH_IDENTITY_KEY=serverIdentity \
-            -e NACOS_AUTH_IDENTITY_VALUE=security \
+            -e NACOS_AUTH_ENABLE=false \
             -p 8848:8848 \
             -p 9848:9848 \
             nacos/nacos-server:v3.2.0
