@@ -267,6 +267,14 @@ export interface ClientOptions {
   alibabaCloudAccessKeyId?: string;     // 阿里云扩展鉴权 AccessKeyId
   alibabaCloudAccessKeySecret?: string; // 阿里云扩展鉴权 AccessKeySecret
   alibabaCloudSecurityToken?: string;   // 阿里云扩展鉴权 SecurityToken
+  alibabaCloudCredentialsUri?: string;  // 阿里云扩展鉴权 Credentials URI
+  securityCredentials?: string | object; // STS 临时凭证 JSON
+  securityCredentialsUrl?: string;      // STS 临时凭证获取 URL
+  ramRoleName?: string;                 // ECS RAM role name
+  cacheSecurityCredentials?: boolean;   // 是否缓存 STS 临时凭证
+  timeToRefreshInMillisecond?: number;  // STS 临时凭证刷新提前量
+  aliyunCredentialsProvider?: any;      // 自定义阿里云凭证 Provider
+  alibabaCloudCredentialsProvider?: any; // 自定义阿里云扩展凭证 Provider
   signatureRegionId?: string;           // 阿里云 v4 签名 regionId
   httpclient?: any;           // http 请求客户端，默认为 urllib
   httpAgent?: any;            // httpAgent
@@ -299,6 +307,14 @@ export enum ClientOptionKeys {
   ALIBABA_CLOUD_ACCESS_KEY_ID = 'alibabaCloudAccessKeyId',
   ALIBABA_CLOUD_ACCESS_KEY_SECRET = 'alibabaCloudAccessKeySecret',
   ALIBABA_CLOUD_SECURITY_TOKEN = 'alibabaCloudSecurityToken',
+  ALIBABA_CLOUD_CREDENTIALS_URI = 'alibabaCloudCredentialsUri',
+  SECURITY_CREDENTIALS = 'securityCredentials',
+  SECURITY_CREDENTIALS_URL = 'securityCredentialsUrl',
+  RAM_ROLE_NAME = 'ramRoleName',
+  CACHE_SECURITY_CREDENTIALS = 'cacheSecurityCredentials',
+  TIME_TO_REFRESH_IN_MILLISECOND = 'timeToRefreshInMillisecond',
+  ALIYUN_CREDENTIALS_PROVIDER = 'aliyunCredentialsProvider',
+  ALIBABA_CLOUD_CREDENTIALS_PROVIDER = 'alibabaCloudCredentialsProvider',
   SIGNATURE_REGION_ID = 'signatureRegionId',
   HTTPCLIENT = 'httpclient',
   APPNAME = 'appName',

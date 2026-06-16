@@ -15,7 +15,12 @@
  * limitations under the License.
  */
 import { getMD5String } from '../src/utils';
-import { buildConfigAuthHeaders, calculateV4SigningKey, resolveAliyunCredentials } from '../src/aliyun_auth';
+import {
+  buildConfigAuthHeaders,
+  calculateV4SigningKey,
+  resolveAliyunCredentials,
+  resolveAliyunCredentialsAsync,
+} from '../src/aliyun_auth';
 import { createDefaultConfiguration } from './utils';
 import * as crypto from 'crypto';
 
@@ -138,5 +143,70 @@ describe('test/utils.test.ts', function() {
 
     assert(headers.signatureVersion === 'v4');
     assert(headers[ 'Spas-Signature' ] === signature);
+  });
+
+  it('should resolve aliyun config credentials from credentials uri with cache', async function() {
+    let count = 0;
+    const configuration = createDefaultConfiguration({
+      alibabaCloudCredentialsUri: 'http://credentials.local',
+      httpclient: {
+        request: async url => {
+          count++;
+          assert(url === 'http://credentials.local');
+          return {
+            status: 200,
+            data: JSON.stringify({
+              AccessKeyId: 'uriAccessKey',
+              AccessKeySecret: 'uriSecretKey',
+              SecurityToken: 'uriToken',
+              Expiration: '2999-01-01T00:00:00Z',
+            }),
+          };
+        },
+      },
+    });
+
+    let credentials = await resolveAliyunCredentialsAsync(configuration);
+    assert(credentials.accessKeyId === 'uriAccessKey');
+    assert(credentials.accessKeySecret === 'uriSecretKey');
+    assert(credentials.securityToken === 'uriToken');
+
+    credentials = await resolveAliyunCredentialsAsync(configuration);
+    assert(credentials.accessKeyId === 'uriAccessKey');
+    assert(count === 1);
+  });
+
+  it('should resolve aliyun config credentials from java style security credentials', async function() {
+    const configuration = createDefaultConfiguration({
+      'security.credentials': JSON.stringify({
+        AccessKeyId: 'securityAccessKey',
+        AccessKeySecret: 'securitySecretKey',
+        SecurityToken: 'securityToken',
+      }),
+    });
+
+    const credentials = await resolveAliyunCredentialsAsync(configuration);
+    assert(credentials.accessKeyId === 'securityAccessKey');
+    assert(credentials.accessKeySecret === 'securitySecretKey');
+    assert(credentials.securityToken === 'securityToken');
+  });
+
+  it('should resolve aliyun config credentials from custom provider', async function() {
+    const configuration = createDefaultConfiguration({
+      signatureRegionId: 'cn-hangzhou',
+      aliyunCredentialsProvider: async () => {
+        return {
+          AccessKeyId: 'providerAccessKey',
+          AccessKeySecret: 'providerSecretKey',
+          SecurityToken: 'providerToken',
+        };
+      },
+    });
+
+    const credentials = await resolveAliyunCredentialsAsync(configuration);
+    assert(credentials.accessKeyId === 'providerAccessKey');
+    assert(credentials.accessKeySecret === 'providerSecretKey');
+    assert(credentials.securityToken === 'providerToken');
+    assert(credentials.signatureRegionId === 'cn-hangzhou');
   });
 });

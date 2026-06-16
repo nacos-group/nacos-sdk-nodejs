@@ -145,6 +145,69 @@ describe('test/util/index.test.js', () => {
     assert(params.signature === util.sign(params.data, signatureKey));
   });
 
+  it('should resolve aliyun naming credentials from credentials uri with cache', async () => {
+    let count = 0;
+    const options = {
+      alibabaCloudCredentialsUri: 'http://credentials.local',
+      httpclient: {
+        request: async url => {
+          count++;
+          assert(url === 'http://credentials.local');
+          return {
+            status: 200,
+            data: JSON.stringify({
+              AccessKeyId: 'uriAk',
+              AccessKeySecret: 'uriSk',
+              SecurityToken: 'uriToken',
+              Expiration: '2999-01-01T00:00:00Z',
+            }),
+          };
+        },
+      },
+    };
+
+    let credentials = await aliyunAuth.resolveAliyunCredentialsAsync(options);
+    assert(credentials.accessKeyId === 'uriAk');
+    assert(credentials.accessKeySecret === 'uriSk');
+    assert(credentials.securityToken === 'uriToken');
+
+    credentials = await aliyunAuth.resolveAliyunCredentialsAsync(options);
+    assert(credentials.accessKeyId === 'uriAk');
+    assert(count === 1);
+  });
+
+  it('should resolve aliyun naming credentials from java style security credentials', async () => {
+    const credentials = await aliyunAuth.resolveAliyunCredentialsAsync({
+      'security.credentials': JSON.stringify({
+        AccessKeyId: 'securityAk',
+        AccessKeySecret: 'securitySk',
+        SecurityToken: 'securityToken',
+      }),
+    });
+
+    assert(credentials.accessKeyId === 'securityAk');
+    assert(credentials.accessKeySecret === 'securitySk');
+    assert(credentials.securityToken === 'securityToken');
+  });
+
+  it('should resolve aliyun naming credentials from custom provider', async () => {
+    const credentials = await aliyunAuth.resolveAliyunCredentialsAsync({
+      signatureRegionId: 'cn-hangzhou',
+      aliyunCredentialsProvider: async () => {
+        return {
+          AccessKeyId: 'providerAk',
+          AccessKeySecret: 'providerSk',
+          SecurityToken: 'providerToken',
+        };
+      },
+    });
+
+    assert(credentials.accessKeyId === 'providerAk');
+    assert(credentials.accessKeySecret === 'providerSk');
+    assert(credentials.securityToken === 'providerToken');
+    assert(credentials.signatureRegionId === 'cn-hangzhou');
+  });
+
   it('should not build aliyun naming auth params without credentials', () => {
     assert(!aliyunAuth.buildNamingAuthParams('nodejs.test', {}));
   });

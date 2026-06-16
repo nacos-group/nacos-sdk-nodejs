@@ -127,8 +127,8 @@ class NameProxy extends Base {
     return aliyunAuth.getNamingSignData(serviceName);
   }
 
-  _checkSignature(params) {
-    const credentials = aliyunAuth.resolveAliyunCredentials(this.options);
+  async _checkSignature(params) {
+    const credentials = await aliyunAuth.resolveAliyunCredentialsAsync(this.options);
     const authParams = aliyunAuth.buildNamingAuthParams(params.serviceName, credentials);
     if (!authParams) return;
     Object.assign(params, authParams);
@@ -146,7 +146,7 @@ class NameProxy extends Base {
   }
 
   async _callServer(serverAddr, method, api, params = {}) {
-    this._checkSignature(params);
+    await this._checkSignature(params);
     params.namespaceId = this.namespace;
     const headers = this._builderHeaders();
 

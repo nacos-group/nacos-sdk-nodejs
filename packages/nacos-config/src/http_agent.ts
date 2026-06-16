@@ -19,7 +19,7 @@ import { ClientOptionKeys, IConfiguration, IServerListManager } from './interfac
 import * as urllib from 'urllib';
 import { encodingParams, transformGBKToUTF8 } from './utils';
 import * as dns from 'dns';
-import { buildConfigAuthHeaders, resolveAliyunCredentials } from './aliyun_auth';
+import { buildConfigAuthHeaders, resolveAliyunCredentialsAsync } from './aliyun_auth';
 
 export class HttpAgent {
 
@@ -128,7 +128,7 @@ export class HttpAgent {
       data.username = this.options.configuration.innerConfig.username;
       data.password = this.options.configuration.innerConfig.password;
     }
-    const credentials = resolveAliyunCredentials(this.configuration);
+    const credentials = await resolveAliyunCredentialsAsync(this.configuration);
 
     // 携带统一的头部信息
     Object.assign(headers, {
