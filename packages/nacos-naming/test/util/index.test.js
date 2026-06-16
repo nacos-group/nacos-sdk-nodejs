@@ -83,15 +83,18 @@ describe('test/util/index.test.js', () => {
     const oldAccessKeyId = process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
     const oldAccessKeySecret = process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
     const oldSecurityToken = process.env.ALIBABA_CLOUD_SECURITY_TOKEN;
+    const oldSignatureRegionId = process.env.ALIBABA_CLOUD_SIGNATURE_REGION_ID;
     try {
       process.env.ALIBABA_CLOUD_ACCESS_KEY_ID = 'envAk';
       process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET = 'envSk';
       process.env.ALIBABA_CLOUD_SECURITY_TOKEN = 'envToken';
+      process.env.ALIBABA_CLOUD_SIGNATURE_REGION_ID = 'cn-hangzhou';
 
       let credentials = aliyunAuth.resolveAliyunCredentials({});
       assert(credentials.accessKeyId === 'envAk');
       assert(credentials.accessKeySecret === 'envSk');
       assert(credentials.securityToken === 'envToken');
+      assert(credentials.signatureRegionId === 'cn-hangzhou');
 
       credentials = aliyunAuth.resolveAliyunCredentials({
         ak: 'legacyAk',
@@ -100,6 +103,7 @@ describe('test/util/index.test.js', () => {
       assert(credentials.accessKeyId === 'legacyAk');
       assert(credentials.accessKeySecret === 'legacySk');
       assert(!credentials.securityToken);
+      assert(!credentials.signatureRegionId);
     } finally {
       if (oldAccessKeyId === undefined) {
         delete process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
@@ -116,7 +120,29 @@ describe('test/util/index.test.js', () => {
       } else {
         process.env.ALIBABA_CLOUD_SECURITY_TOKEN = oldSecurityToken;
       }
+      if (oldSignatureRegionId === undefined) {
+        delete process.env.ALIBABA_CLOUD_SIGNATURE_REGION_ID;
+      } else {
+        process.env.ALIBABA_CLOUD_SIGNATURE_REGION_ID = oldSignatureRegionId;
+      }
     }
+  });
+
+  it('should build aliyun naming auth params with v4 signature', () => {
+    const expectedV4Key = '6qedNinbBK9xTBPtLzmqJMJTlAPB8WaXt3IKrbcu31I=';
+    const v4Key = aliyunAuth.calculateV4SigningKey('secretKey', 'cn-hangzhou', '20260102');
+    assert(v4Key === expectedV4Key);
+
+    const credentials = aliyunAuth.resolveAliyunCredentials({
+      ak: 'accessKey',
+      sk: 'secretKey',
+      signatureRegionId: 'cn-hangzhou',
+    });
+    const params = aliyunAuth.buildNamingAuthParams('nodejs.test', credentials);
+    const signatureKey = aliyunAuth.calculateV4SigningKey('secretKey', 'cn-hangzhou');
+
+    assert(params.signatureVersion === 'v4');
+    assert(params.signature === util.sign(params.data, signatureKey));
   });
 
   it('should not build aliyun naming auth params without credentials', () => {

@@ -267,6 +267,7 @@ export interface ClientOptions {
   alibabaCloudAccessKeyId?: string;     // 阿里云扩展鉴权 AccessKeyId
   alibabaCloudAccessKeySecret?: string; // 阿里云扩展鉴权 AccessKeySecret
   alibabaCloudSecurityToken?: string;   // 阿里云扩展鉴权 SecurityToken
+  signatureRegionId?: string;           // 阿里云 v4 签名 regionId
   httpclient?: any;           // http 请求客户端，默认为 urllib
   httpAgent?: any;            // httpAgent
   appName?: string;           // 应用名，可选
@@ -298,6 +299,7 @@ export enum ClientOptionKeys {
   ALIBABA_CLOUD_ACCESS_KEY_ID = 'alibabaCloudAccessKeyId',
   ALIBABA_CLOUD_ACCESS_KEY_SECRET = 'alibabaCloudAccessKeySecret',
   ALIBABA_CLOUD_SECURITY_TOKEN = 'alibabaCloudSecurityToken',
+  SIGNATURE_REGION_ID = 'signatureRegionId',
   HTTPCLIENT = 'httpclient',
   APPNAME = 'appName',
   SSL = 'ssl',

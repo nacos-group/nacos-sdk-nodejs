@@ -52,6 +52,7 @@ interface NacosNamingClientConfig {
   alibabaCloudAccessKeyId?: string,
   alibabaCloudAccessKeySecret?: string,
   alibabaCloudSecurityToken?: string,
+  signatureRegionId?: string,
   endpoint?: string,
   vipSrvRefInterMillis?: number,
   ssl?: boolean

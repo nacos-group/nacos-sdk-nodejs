@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 import { getMD5String } from '../src/utils';
-import { buildConfigAuthHeaders, resolveAliyunCredentials } from '../src/aliyun_auth';
+import { buildConfigAuthHeaders, calculateV4SigningKey, resolveAliyunCredentials } from '../src/aliyun_auth';
 import { createDefaultConfiguration } from './utils';
 import * as crypto from 'crypto';
 
@@ -74,15 +74,18 @@ describe('test/utils.test.ts', function() {
     const oldAccessKeyId = process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
     const oldAccessKeySecret = process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
     const oldSecurityToken = process.env.ALIBABA_CLOUD_SECURITY_TOKEN;
+    const oldSignatureRegionId = process.env.ALIBABA_CLOUD_SIGNATURE_REGION_ID;
     try {
       process.env.ALIBABA_CLOUD_ACCESS_KEY_ID = 'envAccessKey';
       process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET = 'envSecretKey';
       process.env.ALIBABA_CLOUD_SECURITY_TOKEN = 'envToken';
+      process.env.ALIBABA_CLOUD_SIGNATURE_REGION_ID = 'cn-hangzhou';
 
       let credentials = resolveAliyunCredentials(createDefaultConfiguration({}));
       assert(credentials.accessKeyId === 'envAccessKey');
       assert(credentials.accessKeySecret === 'envSecretKey');
       assert(credentials.securityToken === 'envToken');
+      assert(credentials.signatureRegionId === 'cn-hangzhou');
 
       credentials = resolveAliyunCredentials(createDefaultConfiguration({
         accessKey: 'legacyAccessKey',
@@ -91,6 +94,7 @@ describe('test/utils.test.ts', function() {
       assert(credentials.accessKeyId === 'legacyAccessKey');
       assert(credentials.accessKeySecret === 'legacySecretKey');
       assert(!credentials.securityToken);
+      assert(!credentials.signatureRegionId);
     } finally {
       if (oldAccessKeyId === undefined) {
         delete process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
@@ -107,6 +111,32 @@ describe('test/utils.test.ts', function() {
       } else {
         process.env.ALIBABA_CLOUD_SECURITY_TOKEN = oldSecurityToken;
       }
+      if (oldSignatureRegionId === undefined) {
+        delete process.env.ALIBABA_CLOUD_SIGNATURE_REGION_ID;
+      } else {
+        process.env.ALIBABA_CLOUD_SIGNATURE_REGION_ID = oldSignatureRegionId;
+      }
     }
+  });
+
+  it('should build aliyun config auth headers with v4 signature', function() {
+    assert(calculateV4SigningKey('secretKey', 'cn-hangzhou', '20260102') === '6qedNinbBK9xTBPtLzmqJMJTlAPB8WaXt3IKrbcu31I=');
+
+    const credentials = resolveAliyunCredentials(createDefaultConfiguration({
+      accessKey: 'accessKey',
+      secretKey: 'secretKey',
+      signatureRegionId: 'cn-hangzhou',
+    }));
+    const headers = buildConfigAuthHeaders({
+      tenant: 'tenant',
+      group: 'group',
+    }, credentials, '1234567890');
+    const signatureKey = calculateV4SigningKey('secretKey', 'cn-hangzhou');
+    const signature = crypto.createHmac('sha1', signatureKey)
+      .update('tenant+group+1234567890').digest()
+      .toString('base64');
+
+    assert(headers.signatureVersion === 'v4');
+    assert(headers[ 'Spas-Signature' ] === signature);
   });
 });
