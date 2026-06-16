@@ -276,7 +276,7 @@ const clientOptions = {
 };
 ```
 
-For RoleArn, OIDC, KMS secret rotation, or other custom credential sources, provide a credential provider that returns the same three credential elements:
+For RoleArn, OIDC/RRSA, KMS secret rotation, or other custom credential sources, provide `aliyunCredentialsProvider` or `alibabaCloudCredentialsProvider`. The provider is responsible for obtaining temporary credentials from Aliyun STS or another credential source. The SDK only consumes the returned three credential elements and then signs Nacos requests.
 
 ```js
 const clientOptions = {
@@ -289,6 +289,76 @@ const clientOptions = {
     };
   },
 };
+```
+
+RoleArn AssumeRole example:
+
+```js
+const clientOptions = {
+  serverAddr: '127.0.0.1:8848',
+  aliyunCredentialsProvider: createRoleArnProvider({
+    accessKeyId: 'AccessKeyId',
+    accessKeySecret: 'AccessKeySecret',
+    securityToken: 'OptionalSecurityToken',
+    roleArn: 'acs:ram::123456789012****:role/example-role',
+    roleSessionName: 'nacos-nodejs-sdk',
+    policy: '{"Version":"1","Statement":[]}',
+    roleSessionExpiration: 3600,
+  }),
+};
+
+function createRoleArnProvider(options) {
+  let cachedCredentials;
+  return async () => {
+    if (cachedCredentials && Date.parse(cachedCredentials.Expiration) - Date.now() > 3 * 60 * 1000) {
+      return cachedCredentials;
+    }
+    // Call Aliyun STS AssumeRole with options.roleArn, options.roleSessionName,
+    // options.policy, options.roleSessionExpiration, and the source AK/SK.
+    cachedCredentials = await assumeRoleByAliyunSdk(options);
+    return {
+      AccessKeyId: cachedCredentials.AccessKeyId,
+      AccessKeySecret: cachedCredentials.AccessKeySecret,
+      SecurityToken: cachedCredentials.SecurityToken,
+      Expiration: cachedCredentials.Expiration,
+    };
+  };
+}
+```
+
+OIDC/RRSA example:
+
+```js
+const clientOptions = {
+  serverAddr: '127.0.0.1:8848',
+  aliyunCredentialsProvider: createOidcRoleArnProvider({
+    roleArn: process.env.ALIBABA_CLOUD_ROLE_ARN,
+    roleSessionName: process.env.ALIBABA_CLOUD_ROLE_SESSION_NAME || 'nacos-nodejs-sdk',
+    oidcProviderArn: process.env.ALIBABA_CLOUD_OIDC_PROVIDER_ARN,
+    oidcTokenFile: process.env.ALIBABA_CLOUD_OIDC_TOKEN_FILE,
+    policy: process.env.ALIBABA_CLOUD_POLICY,
+    roleSessionExpiration: Number(process.env.ALIBABA_CLOUD_ROLE_SESSION_EXPIRATION || 3600),
+  }),
+};
+
+function createOidcRoleArnProvider(options) {
+  let cachedCredentials;
+  return async () => {
+    if (cachedCredentials && Date.parse(cachedCredentials.Expiration) - Date.now() > 3 * 60 * 1000) {
+      return cachedCredentials;
+    }
+    // Read options.oidcTokenFile, then call Aliyun STS AssumeRoleWithOIDC
+    // with options.roleArn, options.roleSessionName, options.oidcProviderArn,
+    // options.policy, and options.roleSessionExpiration.
+    cachedCredentials = await assumeRoleWithOidcByAliyunSdk(options);
+    return {
+      AccessKeyId: cachedCredentials.AccessKeyId,
+      AccessKeySecret: cachedCredentials.AccessKeySecret,
+      SecurityToken: cachedCredentials.SecurityToken,
+      Expiration: cachedCredentials.Expiration,
+    };
+  };
+}
 ```
 
 ## Questions & Suggestions
