@@ -171,6 +171,126 @@ default value: [ClientOptions default value](https://github.com/nacos-group/naco
     - {String} group - group
   - {Function} listener - callback handler（optional，remove all listener when it is null）
 
+## Aliyun RAM Authentication
+
+Starting from version `2.6.3`, the SDK supports more Aliyun RAM identity configuration methods. All methods are finally resolved to `AccessKeyId`, `AccessKeySecret`, and optional `SecurityToken`, then the SDK generates the same Nacos authentication fields as before:
+
+- Config client: `Spas-AccessKey`, `timeStamp`, `Spas-Signature`, and optional `Spas-SecurityToken`.
+- Naming client: `signature`, `data`, `ak`, `app`, and optional `Spas-SecurityToken`.
+
+Legacy AK/SK configuration is still supported and keeps the same behavior:
+
+```js
+const configClient = new NacosConfigClient({
+  serverAddr: '127.0.0.1:8848',
+  accessKey: 'AccessKeyId',
+  secretKey: 'AccessKeySecret',
+});
+
+const namingClient = new NacosNamingClient({
+  logger,
+  serverList: '127.0.0.1:8848',
+  ak: 'AccessKeyId',
+  sk: 'AccessKeySecret',
+  appName: 'appName',
+});
+```
+
+Static STS credentials can be configured directly:
+
+```js
+const clientOptions = {
+  serverAddr: '127.0.0.1:8848',
+  alibabaCloudAccessKeyId: 'AccessKeyId',
+  alibabaCloudAccessKeySecret: 'AccessKeySecret',
+  alibabaCloudSecurityToken: 'SecurityToken',
+};
+```
+
+You can also use environment variables:
+
+```bash
+export ALIBABA_CLOUD_ACCESS_KEY_ID=AccessKeyId
+export ALIBABA_CLOUD_ACCESS_KEY_SECRET=AccessKeySecret
+export ALIBABA_CLOUD_SECURITY_TOKEN=SecurityToken
+```
+
+Credentials URI can be used when credentials are provided by a local or remote HTTP endpoint. The endpoint should return JSON containing `AccessKeyId`, `AccessKeySecret`, optional `SecurityToken`, and optional `Expiration`.
+
+```js
+const clientOptions = {
+  serverAddr: '127.0.0.1:8848',
+  alibabaCloudCredentialsUri: 'http://127.0.0.1:8080/credentials',
+};
+```
+
+Static security credentials JSON is supported with the Java client compatible key:
+
+```js
+const clientOptions = {
+  serverAddr: '127.0.0.1:8848',
+  securityCredentials: JSON.stringify({
+    AccessKeyId: 'AccessKeyId',
+    AccessKeySecret: 'AccessKeySecret',
+    SecurityToken: 'SecurityToken',
+  }),
+};
+```
+
+Security credentials URL and ECS RAM role name are also supported:
+
+```js
+const clientOptions = {
+  serverAddr: '127.0.0.1:8848',
+  securityCredentialsUrl: 'http://127.0.0.1:8080/security-credentials',
+  cacheSecurityCredentials: true,
+  timeToRefreshInMillisecond: 3 * 60 * 1000,
+};
+
+const ecsRoleOptions = {
+  serverAddr: '127.0.0.1:8848',
+  ramRoleName: 'example-role-name',
+};
+```
+
+Java-style property names are accepted as aliases:
+
+```js
+const clientOptions = {
+  serverAddr: '127.0.0.1:8848',
+  'security.credentials.url': 'http://127.0.0.1:8080/security-credentials',
+  'ram.role.name': 'example-role-name',
+  'cache.security.credentials': true,
+  'time.to.refresh.in.millisecond': 3 * 60 * 1000,
+};
+```
+
+For v4 signing, configure `signatureRegionId`. When this option is set, the SDK derives the v4 signing key and adds `signatureVersion: 'v4'`.
+
+```js
+const clientOptions = {
+  serverAddr: '127.0.0.1:8848',
+  accessKey: 'AccessKeyId',
+  secretKey: 'AccessKeySecret',
+  signatureRegionId: 'cn-hangzhou',
+};
+```
+
+For RoleArn, OIDC, KMS secret rotation, or other custom credential sources, provide a credential provider that returns the same three credential elements:
+
+```js
+const clientOptions = {
+  serverAddr: '127.0.0.1:8848',
+  aliyunCredentialsProvider: async () => {
+    return {
+      AccessKeyId: 'AccessKeyId',
+      AccessKeySecret: 'AccessKeySecret',
+      SecurityToken: 'SecurityToken',
+    };
+  },
+};
+```
+
 ## Questions & Suggestions
 
 Please let us know how can we help. Do check out [issues](https://github.com/nacos-group/nacos-sdk-nodejs/issues) for bug reports or suggestions first.
