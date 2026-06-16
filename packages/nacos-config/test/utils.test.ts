@@ -15,6 +15,9 @@
  * limitations under the License.
  */
 import { getMD5String } from '../src/utils';
+import { buildConfigAuthHeaders, resolveAliyunCredentials } from '../src/aliyun_auth';
+import { createDefaultConfiguration } from './utils';
+import * as crypto from 'crypto';
 
 const assert = require('assert');
 
@@ -27,5 +30,24 @@ describe('test/utils.test.ts', function() {
   it('should getMD5String ok with 中文', function() {
     const str = 'cashier.function.switcher.status=on\ncashier.function.switcher.whiteListStrategy.tbNickPattern=临观|lichen6928|fangyuct01|朱琳1219|xiaoyin1916|简单de老公|奚薇0716|安桔熟了|七空八档|lichen6928|蝶羽轻尘|漂亮一下吧11|xupingan126|qqk2006|tb5808466|江南好吃|zhang_junlong|ct测试账号002|cguo82|';
     assert(getMD5String(str, 'gbk') === 'f7c5371396b7e7c2777a43590d4c5be2');
+  });
+
+  it('should build aliyun config auth headers with legacy credentials', function() {
+    const configuration = createDefaultConfiguration({
+      accessKey: 'accessKey',
+      secretKey: 'secretKey',
+    });
+    const credentials = resolveAliyunCredentials(configuration);
+    const headers = buildConfigAuthHeaders({
+      tenant: 'tenant',
+      group: 'group',
+    }, credentials, '1234567890');
+
+    const signature = crypto.createHmac('sha1', 'secretKey')
+      .update('tenant+group+1234567890').digest()
+      .toString('base64');
+    assert(headers[ 'Spas-AccessKey' ] === 'accessKey');
+    assert(headers.timeStamp === '1234567890');
+    assert(headers[ 'Spas-Signature' ] === signature);
   });
 });

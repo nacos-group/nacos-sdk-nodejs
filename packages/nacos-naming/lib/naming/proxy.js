@@ -19,7 +19,7 @@
 
 const uuid = require('uuid/v4');
 const Base = require('sdk-base');
-const utils = require('../util');
+const aliyunAuth = require('../util/aliyun_auth');
 const assert = require('assert');
 const utility = require('utility');
 const Constants = require('../const');
@@ -124,19 +124,14 @@ class NameProxy extends Base {
   }
 
   _getSignData(serviceName) {
-    return serviceName ? Date.now() + '@@' + serviceName : Date.now() + '';
+    return aliyunAuth.getNamingSignData(serviceName);
   }
 
   _checkSignature(params) {
-    const { ak, sk, appName } = this.options;
-    if (!ak && !sk) return;
-
-    const signData = this._getSignData(params.serviceName);
-    const signature = utils.sign(signData, sk);
-    params.signature = signature;
-    params.data = signData;
-    params.ak = ak;
-    params.app = appName;
+    const credentials = aliyunAuth.resolveAliyunCredentials(this.options);
+    const authParams = aliyunAuth.buildNamingAuthParams(params.serviceName, credentials);
+    if (!authParams) return;
+    Object.assign(params, authParams);
   }
 
   _builderHeaders() {

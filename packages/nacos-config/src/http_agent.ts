@@ -17,9 +17,9 @@
 import { HTTP_CONFLICT, HTTP_NOT_FOUND, HTTP_OK, VERSION } from './const';
 import { ClientOptionKeys, IConfiguration, IServerListManager } from './interface';
 import * as urllib from 'urllib';
-import * as crypto from 'crypto';
 import { encodingParams, transformGBKToUTF8 } from './utils';
 import * as dns from 'dns';
+import { buildConfigAuthHeaders, resolveAliyunCredentials } from './aliyun_auth';
 
 export class HttpAgent {
 
@@ -128,25 +128,14 @@ export class HttpAgent {
       data.username = this.options.configuration.innerConfig.username;
       data.password = this.options.configuration.innerConfig.password;
     }
-    let signStr = data.tenant;
-    if (data.group && data.tenant) {
-      signStr = data.tenant + '+' + data.group;
-    } else if (data.group) {
-      signStr = data.group;
-    }
-
-    const signature = crypto.createHmac('sha1', this.secretKey)
-      .update(signStr + '+' + ts).digest()
-      .toString('base64');
+    const credentials = resolveAliyunCredentials(this.configuration);
 
     // 携带统一的头部信息
     Object.assign(headers, {
       'Client-Version': VERSION,
       'Content-Type': 'application/x-www-form-urlencoded; charset=utf8',
-      'Spas-AccessKey': this.accessKey,
-      timeStamp: ts,
       exConfigInfo: 'true',
-      'Spas-Signature': signature,
+      ...buildConfigAuthHeaders(data, credentials, ts),
       ...this.identityKey ? {[this.identityKey]: this.identityValue} : {}
     });
 

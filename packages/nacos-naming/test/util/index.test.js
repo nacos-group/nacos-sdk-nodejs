@@ -20,6 +20,7 @@
 const zlib = require('zlib');
 const assert = require('assert');
 const util = require('../../lib/util');
+const aliyunAuth = require('../../lib/util/aliyun_auth');
 
 describe('test/util/index.test.js', () => {
   it('should tryDecompress ok', () => {
@@ -48,5 +49,21 @@ describe('test/util/index.test.js', () => {
   it('should sign ok', () => {
     const result = util.sign('1556606455782@@nodejs.test', 'xxxxxx');
     assert(result === 'hhmW6gWCqR0g8dctGZXQclYomYg=');
+  });
+
+  it('should build aliyun naming auth params with legacy credentials', () => {
+    const params = aliyunAuth.buildNamingAuthParams('nodejs.test', {
+      accessKeyId: 'ak',
+      accessKeySecret: 'sk',
+      appName: 'app',
+    });
+    assert(params.data.endsWith('@@nodejs.test'));
+    assert(params.signature === util.sign(params.data, 'sk'));
+    assert(params.ak === 'ak');
+    assert(params.app === 'app');
+  });
+
+  it('should not build aliyun naming auth params without credentials', () => {
+    assert(!aliyunAuth.buildNamingAuthParams('nodejs.test', {}));
   });
 });
