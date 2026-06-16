@@ -27,6 +27,9 @@ jobs:
       - name: Run unit tests (nacos-common)
         working-directory: packages/nacos-common
         run: npx midway-bin test --ts -- --file test/grpc/payload_codec.test.ts --timeout 30000
+      - name: Run unit tests (nacos-config)
+        working-directory: packages/nacos-config
+        run: npx midway-bin test --ts -- --file test/utils.test.ts --timeout 30000
       - name: Run unit tests (nacos-naming)
         working-directory: packages/nacos-naming
         run: npx midway-bin test --ts -- --file test/naming/instance.test.ts --file test/naming/service_info.test.ts --file test/util/index.test.ts --timeout 30000

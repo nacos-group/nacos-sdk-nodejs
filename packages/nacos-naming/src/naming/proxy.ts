@@ -26,7 +26,7 @@ const sleep = require('mz-modules/sleep');
 /* tslint:enable:no-var-requires */
 
 import { parseServerAddress } from 'nacos-common';
-import { sign } from '../utils';
+import { resolveAliyunCredentialsAsync, buildNamingAuthParams, getNamingSignData } from '../aliyun_auth';
 import {
   BeatInfo,
   ServiceListResult,
@@ -150,19 +150,14 @@ export class NamingProxy extends Base {
   }
 
   _getSignData(serviceName?: string): string {
-    return serviceName ? Date.now() + '@@' + serviceName : Date.now() + '';
+    return getNamingSignData(serviceName);
   }
 
-  _checkSignature(params: Record<string, any>): void {
-    const { ak, sk, appName } = this.options;
-    if (!ak && !sk) return;
-
-    const signData = this._getSignData(params.serviceName);
-    const signature = sign(signData, sk);
-    params.signature = signature;
-    params.data = signData;
-    params.ak = ak;
-    params.app = appName;
+  async _checkSignature(params: Record<string, any>): Promise<void> {
+    const credentials = await resolveAliyunCredentialsAsync(this.options);
+    const authParams = buildNamingAuthParams(params.serviceName, credentials);
+    if (!authParams) return;
+    Object.assign(params, authParams);
   }
 
   _builderHeaders(): Record<string, string> {
@@ -177,7 +172,7 @@ export class NamingProxy extends Base {
   }
 
   async _callServer(serverAddr: string, method: string, api: string, params: Record<string, any> = {}): Promise<string> {
-    this._checkSignature(params);
+    await this._checkSignature(params);
     params.namespaceId = this.namespace;
     const headers = this._builderHeaders();
 

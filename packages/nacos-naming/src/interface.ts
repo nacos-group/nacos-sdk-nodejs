@@ -77,6 +77,32 @@ export interface NacosNamingClientOptions {
   sk?: string;
   /** Application name */
   appName?: string;
+  /** Alibaba Cloud STS security token */
+  securityToken?: string;
+  /** Alibaba Cloud extended auth AccessKeyId */
+  alibabaCloudAccessKeyId?: string;
+  /** Alibaba Cloud extended auth AccessKeySecret */
+  alibabaCloudAccessKeySecret?: string;
+  /** Alibaba Cloud extended auth SecurityToken */
+  alibabaCloudSecurityToken?: string;
+  /** Alibaba Cloud extended auth Credentials URI */
+  alibabaCloudCredentialsUri?: string;
+  /** STS temporary credentials JSON */
+  securityCredentials?: string | object;
+  /** STS temporary credentials fetch URL */
+  securityCredentialsUrl?: string;
+  /** ECS RAM role name */
+  ramRoleName?: string;
+  /** Whether to cache STS temporary credentials */
+  cacheSecurityCredentials?: boolean;
+  /** Refresh-ahead time (ms) for STS temporary credentials */
+  timeToRefreshInMillisecond?: number;
+  /** Custom Alibaba Cloud credential provider */
+  aliyunCredentialsProvider?: any;
+  /** Custom Alibaba Cloud extended credential provider */
+  alibabaCloudCredentialsProvider?: any;
+  /** Alibaba Cloud v4 signature region ID */
+  signatureRegionId?: string;
   /** Interval in ms to refresh server list from endpoint (default: 30000) */
   vipSrvRefInterMillis?: number;
   /** Username for authentication */

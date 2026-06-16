@@ -15,11 +15,9 @@
  * limitations under the License.
  */
 
-'use strict';
-
-const crypto = require('crypto');
-const urllib = require('urllib');
-const utils = require('./');
+import * as crypto from 'crypto';
+import * as urllib from 'urllib';
+import { sign } from './utils';
 
 const RAM_SECURITY_CREDENTIALS_URL = 'http://100.100.100.200/latest/meta-data/ram/security-credentials/';
 const V4_PREFIX = 'aliyun_v4';
@@ -27,9 +25,25 @@ const V4_REQUEST = 'aliyun_v4_request';
 const V4_PRODUCT = 'mse-nacos';
 const V4_SIGNATURE_VERSION = 'v4';
 const DEFAULT_REFRESH_BEFORE_EXPIRE = 3 * 60 * 1000;
-const credentialCache = new WeakMap();
 
-function firstNotEmpty(values) {
+export interface AliyunCredentials {
+  accessKeyId?: string;
+  accessKeySecret?: string;
+  securityToken?: string;
+  signatureRegionId?: string;
+  appName?: string;
+  expiration?: string | Date;
+}
+
+interface CredentialCache {
+  key: string;
+  credentials: AliyunCredentials;
+  expirationTime?: number;
+}
+
+const credentialCache = new WeakMap<any, CredentialCache>();
+
+function firstNotEmpty(values: any[]): any {
   for (const value of values) {
     if (value !== undefined && value !== null && value !== '') {
       return value;
@@ -37,7 +51,7 @@ function firstNotEmpty(values) {
   }
 }
 
-exports.resolveAliyunCredentials = options => {
+export function resolveAliyunCredentials(options: any): AliyunCredentials {
   const legacyAccessKeyId = options.ak;
   const legacyAccessKeySecret = options.sk;
   const hasLegacyCredentials = legacyAccessKeyId || legacyAccessKeySecret;
@@ -68,9 +82,9 @@ exports.resolveAliyunCredentials = options => {
     ]),
     appName: options.appName,
   };
-};
+}
 
-function normalizeAliyunCredentials(data, signatureRegionId) {
+function normalizeAliyunCredentials(data: any, signatureRegionId?: string): AliyunCredentials {
   const credentials = typeof data === 'string' ? JSON.parse(data) : data || {};
   return {
     accessKeyId: firstNotEmpty([
@@ -98,23 +112,23 @@ function normalizeAliyunCredentials(data, signatureRegionId) {
   };
 }
 
-function getExpirationTime(credentials) {
+function getExpirationTime(credentials: AliyunCredentials): number | undefined {
   if (!credentials.expiration) return;
   if (credentials.expiration instanceof Date) {
     return credentials.expiration.getTime();
   }
-  const expirationTime = Date.parse(credentials.expiration);
+  const expirationTime = Date.parse(credentials.expiration as string);
   return isNaN(expirationTime) ? undefined : expirationTime;
 }
 
-function getRefreshBeforeExpire(options) {
+function getRefreshBeforeExpire(options: any): number {
   return Number(firstNotEmpty([
     options.timeToRefreshInMillisecond,
     options['time.to.refresh.in.millisecond'],
   ])) || DEFAULT_REFRESH_BEFORE_EXPIRE;
 }
 
-function isCacheEnabled(options) {
+function isCacheEnabled(options: any): boolean {
   const value = firstNotEmpty([
     options.cacheSecurityCredentials,
     options['cache.security.credentials'],
@@ -122,7 +136,7 @@ function isCacheEnabled(options) {
   return value !== false && value !== 'false';
 }
 
-function getCachedCredentials(options, key) {
+function getCachedCredentials(options: any, key: string): AliyunCredentials | null {
   const cache = credentialCache.get(options);
   if (!cache || cache.key !== key || !isCacheEnabled(options)) {
     return null;
@@ -136,7 +150,7 @@ function getCachedCredentials(options, key) {
   return null;
 }
 
-function setCachedCredentials(options, key, credentials) {
+function setCachedCredentials(options: any, key: string, credentials: AliyunCredentials): void {
   if (!isCacheEnabled(options)) {
     return;
   }
@@ -147,7 +161,7 @@ function setCachedCredentials(options, key, credentials) {
   });
 }
 
-function hasDynamicCredentials(options) {
+function hasDynamicCredentials(options: any): boolean {
   const hasLegacyCredentials = options.ak || options.sk;
   return !!(options.aliyunCredentialsProvider
     || options.alibabaCloudCredentialsProvider
@@ -161,7 +175,7 @@ function hasDynamicCredentials(options) {
     || (!hasLegacyCredentials && process.env.ALIBABA_CLOUD_CREDENTIALS_URI));
 }
 
-async function resolveFromProvider(provider, options) {
+async function resolveFromProvider(provider: any, options: any): Promise<AliyunCredentials | null> {
   if (!provider) {
     return null;
   }
@@ -177,7 +191,7 @@ async function resolveFromProvider(provider, options) {
   return normalizeAliyunCredentials(provider);
 }
 
-async function fetchCredentials(options, url) {
+async function fetchCredentials(options: any, url: string): Promise<AliyunCredentials> {
   const cacheKey = 'url:' + url;
   const cachedCredentials = getCachedCredentials(options, cacheKey);
   if (cachedCredentials) {
@@ -198,8 +212,8 @@ async function fetchCredentials(options, url) {
   return credentials;
 }
 
-async function resolveDynamicAliyunCredentials(options) {
-  const baseCredentials = exports.resolveAliyunCredentials(options);
+async function resolveDynamicAliyunCredentials(options: any): Promise<AliyunCredentials | null> {
+  const baseCredentials = resolveAliyunCredentials(options);
   const provider = firstNotEmpty([
     options.aliyunCredentialsProvider,
     options.alibabaCloudCredentialsProvider,
@@ -263,24 +277,24 @@ async function resolveDynamicAliyunCredentials(options) {
   return null;
 }
 
-exports.resolveAliyunCredentialsAsync = async options => {
+export async function resolveAliyunCredentialsAsync(options: any): Promise<AliyunCredentials> {
   if (!hasDynamicCredentials(options)) {
-    return exports.resolveAliyunCredentials(options);
+    return resolveAliyunCredentials(options);
   }
   const credentials = await resolveDynamicAliyunCredentials(options);
-  return credentials || exports.resolveAliyunCredentials(options);
-};
+  return credentials || resolveAliyunCredentials(options);
+}
 
-exports.getNamingSignData = serviceName => {
+export function getNamingSignData(serviceName?: string): string {
   return serviceName ? Date.now() + '@@' + serviceName : Date.now() + '';
-};
+}
 
-function hmacSha256(data, key) {
+function hmacSha256(data: string, key: string | Buffer): Buffer {
   return crypto.createHmac('sha256', key)
     .update(data).digest();
 }
 
-function getUtcSignDate() {
+function getUtcSignDate(): string {
   const date = new Date();
   const year = date.getUTCFullYear();
   const month = ('0' + (date.getUTCMonth() + 1)).slice(-2);
@@ -288,27 +302,27 @@ function getUtcSignDate() {
   return year + month + day;
 }
 
-exports.calculateV4SigningKey = (secret, regionId, signDate = getUtcSignDate()) => {
+export function calculateV4SigningKey(secret: string, regionId: string, signDate: string = getUtcSignDate()): string {
   const firstKey = hmacSha256(signDate, V4_PREFIX + secret);
   const regionKey = hmacSha256(regionId, firstKey);
   const productKey = hmacSha256(V4_PRODUCT, regionKey);
   return hmacSha256(V4_REQUEST, productKey).toString('base64');
-};
+}
 
-exports.getActualAccessKeySecret = credentials => {
+export function getActualAccessKeySecret(credentials: AliyunCredentials): string {
   const accessKeySecret = credentials.accessKeySecret || '';
   if (!credentials.signatureRegionId) {
     return accessKeySecret;
   }
-  return exports.calculateV4SigningKey(accessKeySecret, credentials.signatureRegionId);
-};
+  return calculateV4SigningKey(accessKeySecret, credentials.signatureRegionId);
+}
 
-exports.buildNamingAuthParams = (serviceName, credentials) => {
+export function buildNamingAuthParams(serviceName: string, credentials: AliyunCredentials): Record<string, any> | null {
   if (!credentials.accessKeyId && !credentials.accessKeySecret) return null;
 
-  const signData = exports.getNamingSignData(serviceName);
-  const params = {
-    signature: utils.sign(signData, exports.getActualAccessKeySecret(credentials)),
+  const signData = getNamingSignData(serviceName);
+  const params: Record<string, any> = {
+    signature: sign(signData, getActualAccessKeySecret(credentials)),
     data: signData,
     ak: credentials.accessKeyId,
     app: credentials.appName,
@@ -320,4 +334,4 @@ exports.buildNamingAuthParams = (serviceName, credentials) => {
     params.signatureVersion = V4_SIGNATURE_VERSION;
   }
   return params;
-};
+}
