@@ -30,11 +30,11 @@ importers:
         specifier: workspace:*
         version: link:../nacos-common
       nacos-config:
-        specifier: ^2.6.1
-        version: 2.6.2
+        specifier: ^2.6.3
+        version: 2.6.3
       nacos-naming:
-        specifier: ^2.6.1
-        version: 2.6.2
+        specifier: ^2.6.3
+        version: 2.6.3
     devDependencies:
       '@types/mocha':
         specifier: ^5.2.5
@@ -3265,12 +3265,12 @@ packages:
   mz@2.7.0:
     resolution: {integrity: sha512-z81GNO7nnYMEhrGh9LeymoE4+Yr0Wn5McHIZMK5cfQCl+NDX08sCZgUc9/6MHni9IWuFLm1Z3HTCXu2z9fN62Q==}
 
-  nacos-config@2.6.2:
-    resolution: {integrity: sha512-i7T5GPqpmHk2NU0zVzYHhWqDmTu5DRudhFepVBtITkoSlqSQQk4AdJBhZLTOVrf8qvt2rYJt4pAWbOFcqxN4Dg==}
+  nacos-config@2.6.3:
+    resolution: {integrity: sha512-k+DRKhkdFYhoMauz3ZaAE/ccW2QpJJ+MEJexFNNqzCQCq5skXWlBkrV1yOSGL1Vo1Xv3oT4uOeYi2mshpJIW8g==}
     engines: {node: '>= 8.0.0'}
 
-  nacos-naming@2.6.2:
-    resolution: {integrity: sha512-fGtKvmMjis4wL8y3TpTJszlKLBgqwUJLq5ZR3XcD/yGveQlCC2hhqi1xEVU0w4U4d+udQD62FhdpjG/oovFPTw==}
+  nacos-naming@2.6.3:
+    resolution: {integrity: sha512-FY5+tMdlZa1Io834KwqDF7B9lXTKoMruCIygG3YbsA564465RiEZ2p5nSa/8fDJZtJq4GjjV+GOKw+Tu/0pd1g==}
     engines: {node: '>= 8.0.0'}
 
   nan@2.27.0:
@@ -8908,7 +8908,7 @@ snapshots:
       object-assign: 4.1.1
       thenify-all: 1.6.0
 
-  nacos-config@2.6.2:
+  nacos-config@2.6.3:
     dependencies:
       cluster-client: 2.1.2
       co-gather: 1.0.1
@@ -8926,7 +8926,7 @@ snapshots:
       - proxy-agent
       - supports-color
 
-  nacos-naming@2.6.2:
+  nacos-naming@2.6.3:
     dependencies:
       address: 1.2.2
       equals: 1.0.5
