@@ -50,4 +50,63 @@ describe('test/utils.test.ts', function() {
     assert(headers.timeStamp === '1234567890');
     assert(headers[ 'Spas-Signature' ] === signature);
   });
+
+  it('should resolve aliyun config auth headers with static sts credentials', function() {
+    const configuration = createDefaultConfiguration({
+      alibabaCloudAccessKeyId: 'stsAccessKey',
+      alibabaCloudAccessKeySecret: 'stsSecretKey',
+      alibabaCloudSecurityToken: 'stsToken',
+    });
+    const credentials = resolveAliyunCredentials(configuration);
+    const headers = buildConfigAuthHeaders({
+      tenant: 'tenant',
+      group: 'group',
+    }, credentials, '1234567890');
+
+    assert(credentials.accessKeyId === 'stsAccessKey');
+    assert(credentials.accessKeySecret === 'stsSecretKey');
+    assert(credentials.securityToken === 'stsToken');
+    assert(headers[ 'Spas-AccessKey' ] === 'stsAccessKey');
+    assert(headers[ 'Spas-SecurityToken' ] === 'stsToken');
+  });
+
+  it('should resolve aliyun config credentials from env without overriding legacy token behavior', function() {
+    const oldAccessKeyId = process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
+    const oldAccessKeySecret = process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
+    const oldSecurityToken = process.env.ALIBABA_CLOUD_SECURITY_TOKEN;
+    try {
+      process.env.ALIBABA_CLOUD_ACCESS_KEY_ID = 'envAccessKey';
+      process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET = 'envSecretKey';
+      process.env.ALIBABA_CLOUD_SECURITY_TOKEN = 'envToken';
+
+      let credentials = resolveAliyunCredentials(createDefaultConfiguration({}));
+      assert(credentials.accessKeyId === 'envAccessKey');
+      assert(credentials.accessKeySecret === 'envSecretKey');
+      assert(credentials.securityToken === 'envToken');
+
+      credentials = resolveAliyunCredentials(createDefaultConfiguration({
+        accessKey: 'legacyAccessKey',
+        secretKey: 'legacySecretKey',
+      }));
+      assert(credentials.accessKeyId === 'legacyAccessKey');
+      assert(credentials.accessKeySecret === 'legacySecretKey');
+      assert(!credentials.securityToken);
+    } finally {
+      if (oldAccessKeyId === undefined) {
+        delete process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
+      } else {
+        process.env.ALIBABA_CLOUD_ACCESS_KEY_ID = oldAccessKeyId;
+      }
+      if (oldAccessKeySecret === undefined) {
+        delete process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
+      } else {
+        process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET = oldAccessKeySecret;
+      }
+      if (oldSecurityToken === undefined) {
+        delete process.env.ALIBABA_CLOUD_SECURITY_TOKEN;
+      } else {
+        process.env.ALIBABA_CLOUD_SECURITY_TOKEN = oldSecurityToken;
+      }
+    }
+  });
 });

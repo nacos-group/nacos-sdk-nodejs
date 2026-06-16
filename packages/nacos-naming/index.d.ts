@@ -45,6 +45,13 @@ interface NacosNamingClientConfig {
   namespace?: string,
   username?: string,
   password?: string,
+  ak?: string,
+  sk?: string,
+  appName?: string,
+  securityToken?: string,
+  alibabaCloudAccessKeyId?: string,
+  alibabaCloudAccessKeySecret?: string,
+  alibabaCloudSecurityToken?: string,
   endpoint?: string,
   vipSrvRefInterMillis?: number,
   ssl?: boolean

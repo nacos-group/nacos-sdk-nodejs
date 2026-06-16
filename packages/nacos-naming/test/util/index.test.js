@@ -63,6 +63,62 @@ describe('test/util/index.test.js', () => {
     assert(params.app === 'app');
   });
 
+  it('should build aliyun naming auth params with static sts credentials', () => {
+    const credentials = aliyunAuth.resolveAliyunCredentials({
+      alibabaCloudAccessKeyId: 'stsAk',
+      alibabaCloudAccessKeySecret: 'stsSk',
+      alibabaCloudSecurityToken: 'stsToken',
+      appName: 'app',
+    });
+    const params = aliyunAuth.buildNamingAuthParams('nodejs.test', credentials);
+
+    assert(credentials.accessKeyId === 'stsAk');
+    assert(credentials.accessKeySecret === 'stsSk');
+    assert(credentials.securityToken === 'stsToken');
+    assert(params.ak === 'stsAk');
+    assert(params['Spas-SecurityToken'] === 'stsToken');
+  });
+
+  it('should resolve aliyun naming credentials from env without overriding legacy token behavior', () => {
+    const oldAccessKeyId = process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
+    const oldAccessKeySecret = process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
+    const oldSecurityToken = process.env.ALIBABA_CLOUD_SECURITY_TOKEN;
+    try {
+      process.env.ALIBABA_CLOUD_ACCESS_KEY_ID = 'envAk';
+      process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET = 'envSk';
+      process.env.ALIBABA_CLOUD_SECURITY_TOKEN = 'envToken';
+
+      let credentials = aliyunAuth.resolveAliyunCredentials({});
+      assert(credentials.accessKeyId === 'envAk');
+      assert(credentials.accessKeySecret === 'envSk');
+      assert(credentials.securityToken === 'envToken');
+
+      credentials = aliyunAuth.resolveAliyunCredentials({
+        ak: 'legacyAk',
+        sk: 'legacySk',
+      });
+      assert(credentials.accessKeyId === 'legacyAk');
+      assert(credentials.accessKeySecret === 'legacySk');
+      assert(!credentials.securityToken);
+    } finally {
+      if (oldAccessKeyId === undefined) {
+        delete process.env.ALIBABA_CLOUD_ACCESS_KEY_ID;
+      } else {
+        process.env.ALIBABA_CLOUD_ACCESS_KEY_ID = oldAccessKeyId;
+      }
+      if (oldAccessKeySecret === undefined) {
+        delete process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET;
+      } else {
+        process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET = oldAccessKeySecret;
+      }
+      if (oldSecurityToken === undefined) {
+        delete process.env.ALIBABA_CLOUD_SECURITY_TOKEN;
+      } else {
+        process.env.ALIBABA_CLOUD_SECURITY_TOKEN = oldSecurityToken;
+      }
+    }
+  });
+
   it('should not build aliyun naming auth params without credentials', () => {
     assert(!aliyunAuth.buildNamingAuthParams('nodejs.test', {}));
   });

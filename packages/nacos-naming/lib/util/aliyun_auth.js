@@ -19,10 +19,38 @@
 
 const utils = require('./');
 
+function firstNotEmpty(values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== '') {
+      return value;
+    }
+  }
+}
+
 exports.resolveAliyunCredentials = options => {
+  const legacyAccessKeyId = options.ak;
+  const legacyAccessKeySecret = options.sk;
+  const hasLegacyCredentials = legacyAccessKeyId || legacyAccessKeySecret;
   return {
-    accessKeyId: options.ak,
-    accessKeySecret: options.sk,
+    accessKeyId: firstNotEmpty([
+      legacyAccessKeyId,
+      options.accessKey,
+      options.accessKeyId,
+      options.alibabaCloudAccessKeyId,
+      process.env.ALIBABA_CLOUD_ACCESS_KEY_ID,
+    ]),
+    accessKeySecret: firstNotEmpty([
+      legacyAccessKeySecret,
+      options.secretKey,
+      options.accessKeySecret,
+      options.alibabaCloudAccessKeySecret,
+      process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET,
+    ]),
+    securityToken: firstNotEmpty([
+      options.securityToken,
+      options.alibabaCloudSecurityToken,
+      hasLegacyCredentials ? undefined : process.env.ALIBABA_CLOUD_SECURITY_TOKEN,
+    ]),
     appName: options.appName,
   };
 };
@@ -35,10 +63,14 @@ exports.buildNamingAuthParams = (serviceName, credentials) => {
   if (!credentials.accessKeyId && !credentials.accessKeySecret) return null;
 
   const signData = exports.getNamingSignData(serviceName);
-  return {
+  const params = {
     signature: utils.sign(signData, credentials.accessKeySecret),
     data: signData,
     ak: credentials.accessKeyId,
     app: credentials.appName,
   };
+  if (credentials.securityToken) {
+    params['Spas-SecurityToken'] = credentials.securityToken;
+  }
+  return params;
 };

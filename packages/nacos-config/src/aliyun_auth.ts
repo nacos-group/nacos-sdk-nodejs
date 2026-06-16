@@ -24,10 +24,35 @@ export interface AliyunCredentials {
   signatureRegionId?: string;
 }
 
+function firstNotEmpty(values: any[]): string {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== '') {
+      return value;
+    }
+  }
+  return undefined;
+}
+
 export function resolveAliyunCredentials(configuration: IConfiguration): AliyunCredentials {
+  const legacyAccessKeyId = configuration.get(ClientOptionKeys.ACCESSKEY);
+  const legacyAccessKeySecret = configuration.get(ClientOptionKeys.SECRETKEY);
+  const hasLegacyCredentials = legacyAccessKeyId || legacyAccessKeySecret;
   return {
-    accessKeyId: configuration.get(ClientOptionKeys.ACCESSKEY),
-    accessKeySecret: configuration.get(ClientOptionKeys.SECRETKEY),
+    accessKeyId: firstNotEmpty([
+      legacyAccessKeyId,
+      configuration.get(ClientOptionKeys.ALIBABA_CLOUD_ACCESS_KEY_ID),
+      process.env.ALIBABA_CLOUD_ACCESS_KEY_ID,
+    ]),
+    accessKeySecret: firstNotEmpty([
+      legacyAccessKeySecret,
+      configuration.get(ClientOptionKeys.ALIBABA_CLOUD_ACCESS_KEY_SECRET),
+      process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET,
+    ]),
+    securityToken: firstNotEmpty([
+      configuration.get(ClientOptionKeys.SECURITY_TOKEN),
+      configuration.get(ClientOptionKeys.ALIBABA_CLOUD_SECURITY_TOKEN),
+      hasLegacyCredentials ? undefined : process.env.ALIBABA_CLOUD_SECURITY_TOKEN,
+    ]),
   };
 }
 
@@ -50,9 +75,13 @@ export function getConfigSignResource(data: any): string {
 export function buildConfigAuthHeaders(data: any, credentials: AliyunCredentials, timestamp: string) {
   const signStr = getConfigSignResource(data);
   const signature = hmacSha1(signStr + '+' + timestamp, credentials.accessKeySecret || '');
-  return {
+  const headers: any = {
     'Spas-AccessKey': credentials.accessKeyId,
     timeStamp: timestamp,
     'Spas-Signature': signature,
   };
+  if (credentials.securityToken) {
+    headers[ 'Spas-SecurityToken' ] = credentials.securityToken;
+  }
+  return headers;
 }

@@ -263,6 +263,10 @@ export interface ClientOptions {
   namespace?: string;         // 阿里云的 namespace
   accessKey?: string;         // 阿里云的 accessKey
   secretKey?: string;         // 阿里云的 secretKey
+  securityToken?: string;     // 阿里云的 STS securityToken
+  alibabaCloudAccessKeyId?: string;     // 阿里云扩展鉴权 AccessKeyId
+  alibabaCloudAccessKeySecret?: string; // 阿里云扩展鉴权 AccessKeySecret
+  alibabaCloudSecurityToken?: string;   // 阿里云扩展鉴权 SecurityToken
   httpclient?: any;           // http 请求客户端，默认为 urllib
   httpAgent?: any;            // httpAgent
   appName?: string;           // 应用名，可选
@@ -290,6 +294,10 @@ export enum ClientOptionKeys {
   NAMESPACE = 'namespace',
   ACCESSKEY = 'accessKey',
   SECRETKEY = 'secretKey',
+  SECURITY_TOKEN = 'securityToken',
+  ALIBABA_CLOUD_ACCESS_KEY_ID = 'alibabaCloudAccessKeyId',
+  ALIBABA_CLOUD_ACCESS_KEY_SECRET = 'alibabaCloudAccessKeySecret',
+  ALIBABA_CLOUD_SECURITY_TOKEN = 'alibabaCloudSecurityToken',
   HTTPCLIENT = 'httpclient',
   APPNAME = 'appName',
   SSL = 'ssl',
