@@ -3,11 +3,11 @@
  * Create Time: 2021/8/20 9:12
  */
 interface Instance {
-  instanceId: string,
+  instanceId?: string,
   ip: string,                                         //IP of instance
   port: number,                                       //Port of instance
-  healthy: boolean,
-  enabled: boolean,
+  healthy?: boolean,
+  enabled?: boolean,
   serviceName?: string,
   weight?: number,
   ephemeral?: boolean,
