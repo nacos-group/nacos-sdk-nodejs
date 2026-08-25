@@ -28,7 +28,7 @@ import { GrpcNamingProxy } from './grpc_proxy';
 import { BeatReactor } from './beat_reactor';
 import { HostReactor } from './host_reactor';
 import { NacosNamingClientOptions, Host, SubscribeInfo, BeatInfo } from '../interface';
-import { getGroupedName } from '../utils';
+import { getGroupedName, chooseHostByWeight } from '../utils';
 import { DEFAULT_GROUP } from '../const';
 
 const defaultOptions = {
@@ -172,6 +172,17 @@ export class NacosNamingClient extends Base {
     return serviceInfo.hosts.filter((host: Host) => {
       return host.healthy === healthy && host.enabled && host.weight > 0;
     });
+  }
+
+  /**
+   * Select one healthy instance with weighted random load balancing,
+   * aligned with the Java SDK `NamingService#selectOneHealthyInstance`.
+   * Returns null when there is no healthy and enabled instance
+   * with a positive weight.
+   */
+  async selectOneHealthyInstance(serviceName: string, groupName: string = DEFAULT_GROUP, clusters: string = '', subscribe: boolean = true): Promise<Host | null> {
+    const hosts = await this.selectInstances(serviceName, groupName, clusters, true, subscribe);
+    return chooseHostByWeight(hosts);
   }
 
   async getServerStatus(): Promise<string> {
