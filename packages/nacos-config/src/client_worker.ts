@@ -414,22 +414,41 @@ export class ClientWorker extends Base implements IClientWorker {
    * @param {String} content - config value
    * @param {Object} [options]
    *   - {String} type - type of the data
+   *   - {String} casMd5 - CAS md5 of the expected config content, publish fails when mismatched
    * @return {Boolean} success
    */
   async publishSingle(dataId, group, content, options?: UnitOptions) {
+    const data: { [key: string]: string } = {
+      dataId,
+      group,
+      content,
+      tenant: this.namespace,
+      type: options && options.type,
+      appName: this.appName
+    };
+    if (options && options.casMd5) {
+      data.casMd5 = options.casMd5;
+    }
     await this.httpAgent.request(this.apiRoutePath.PUBLISH, {
       method: 'POST',
       encode: true,
-      data: {
-        dataId,
-        group,
-        content,
-        tenant: this.namespace,
-        type: options && options.type,
-        appName: this.appName
-      },
+      data,
     });
     return true;
+  }
+
+  /**
+   * 以 CAS 方式发布配置，仅当服务端当前配置的 md5 与 casMd5 一致时才发布成功
+   * @param {String} dataId - id of the data
+   * @param {String} group - group name of the data
+   * @param {String} content - config value
+   * @param {String} casMd5 - md5 of the expected current config content
+   * @param {Object} [options]
+   *   - {String} type - type of the data
+   * @return {Boolean} success
+   */
+  async publishConfigCas(dataId, group, content, casMd5, options?: UnitOptions) {
+    return await this.publishSingle(dataId, group, content, { ...options, casMd5 });
   }
 
   /**

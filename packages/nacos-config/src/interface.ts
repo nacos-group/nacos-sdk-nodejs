@@ -38,11 +38,15 @@ export interface CommonInputOptions {
 }
 
 export interface UnitOptions {
-  unit: string;
+  unit?: string;
   /**
    * Configuration type, e.g., 'text', 'json', 'xml', 'html', 'properties', 'yaml', etc.
    */
   type?: string;
+  /**
+   * CAS md5 of the expected config content, publish fails when mismatched with server side.
+   */
+  casMd5?: string;
 }
 
 /**
@@ -104,6 +108,19 @@ export interface IClientWorker {
    * @returns {Promise<boolean>} true | false
    */
   publishSingle(dataId: string, group: string, content: string, options?: UnitOptions): Promise<boolean>;
+
+  /**
+   * @description 以 CAS 方式发布配置，仅当服务端当前配置的 md5 与 casMd5 一致时才发布成功
+   * @param {String} dataId - id of the data
+   * @param {String} group - group name of the data
+   * @param {String} content - config value
+   * @param {String} casMd5 - md5 of the expected current config content
+   * @param {Object} [options]
+   *   - {String} unit - which unit you want to connect, default is current unit
+   *   - {String} type - config type, e.g., 'text', 'json', 'xml', 'html', 'properties', 'yaml', etc.
+   * @returns {Promise<boolean>} true | false
+   */
+  publishConfigCas(dataId: string, group: string, content: string, casMd5: string, options?: UnitOptions): Promise<boolean>;
 
   /**
    * @description 删除配置
