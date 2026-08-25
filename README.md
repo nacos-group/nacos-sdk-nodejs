@@ -145,6 +145,11 @@ gRPC advantages over HTTP:
   - [clusters] {String} Cluster names
   - [healthy] {Boolean} filter healthy instances, default is true
   - [subscribe] {Boolean} whether subscribe the service, default is true
+- `selectOneHealthyInstance(serviceName, [groupName], [clusters], [subscribe])` Select one healthy instance of service with weighted random load balancing (aligned with the Java SDK `NamingService#selectOneHealthyInstance`). Returns null when no healthy and enabled instance with a positive weight is available.
+  - serviceName {String} Service name
+  - [groupName] {String} group name, default is `DEFAULT_GROUP`
+  - [clusters] {String} Cluster names
+  - [subscribe] {Boolean} whether subscribe the service, default is true
 - `getServerStatus()` Get the status of nacos server, 'UP' or 'DOWN'.
 - `subscribe(info, listener)` Subscribe the instances of the service
   - info {Object|String} service info, if type is string, it's the serviceName

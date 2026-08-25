@@ -21,6 +21,7 @@ const zlib = require('zlib');
 const crypto = require('crypto');
 /* tslint:enable:no-var-requires */
 import { SERVICE_INFO_SPLITER, DEFAULT_GROUP } from './const';
+import { Host } from './interface';
 
 const GZIP_MAGIC = 35615;
 
@@ -60,4 +61,33 @@ export function getGroupName(serviceNameWithGroup: string): string {
     return DEFAULT_GROUP;
   }
   return serviceNameWithGroup.split(SERVICE_INFO_SPLITER)[0];
+}
+
+/**
+ * Select one host from the list using weighted random selection,
+ * aligned with the Java SDK `NamingUtils#selectOneWithWeight`.
+ * Every host is expected to carry a positive weight; a host with a
+ * larger weight is proportionally more likely to be picked.
+ * Returns null when the list is empty.
+ */
+export function chooseHostByWeight(hosts: Host[]): Host | null {
+  if (!hosts || hosts.length === 0) {
+    return null;
+  }
+  if (hosts.length === 1) {
+    return hosts[0];
+  }
+  let totalWeight = 0;
+  for (const host of hosts) {
+    totalWeight += host.weight;
+  }
+  const random = Math.random() * totalWeight;
+  let currentWeight = 0;
+  for (const host of hosts) {
+    currentWeight += host.weight;
+    if (random < currentWeight) {
+      return host;
+    }
+  }
+  return hosts[hosts.length - 1];
 }
