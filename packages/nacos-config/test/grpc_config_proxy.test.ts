@@ -73,7 +73,9 @@ describe('test/grpc_config_proxy.test.ts', () => {
     await sleep(500);
 
     const content = await proxy.getConfig(dataId, group);
-    assert(content === '', `getConfig after remove should return empty, got: ${content}`);
+    // 配置删除后服务端返回 CONFIG_NOT_FOUND(errorCode=300)，getConfig 契约为 string|null，
+    // not-found 归一为 null；兼容个别服务端 200+空串，二者都表示“无内容”。
+    assert(content === '' || content === null, `getConfig after remove should return empty or null (config-not-found), got: ${content}`);
   });
 
   it('should listen for config changes via gRPC', async function() {

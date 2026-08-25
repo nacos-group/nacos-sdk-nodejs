@@ -20,6 +20,7 @@ import { getMD5String } from './utils';
 import * as path from 'path';
 import * as is from 'is-type-of';
 import { HttpAgent } from './http_agent';
+import { readConfigWithFailover, withSnapshotLock } from './disaster_recovery';
 
 const Base = require('sdk-base');
 const gather = require('co-gather');
@@ -203,10 +204,19 @@ export class ClientWorker extends Base implements IClientWorker {
       return;
     }
 
+    // 每轮先检查本地 failover 文件的创建/删除/变更（对齐 Java SDK checkLocalConfig）
+    await this.checkLocalFailover();
+
     const beginTime = Date.now();
     const tenant = this.namespace;
     const probeUpdate = [];
-    for (const { dataId, group, md5 } of this.subscriptions.values()) {
+    for (const item of this.subscriptions.values()) {
+      // 处于 failover 模式的 key 使用本地容灾内容，跳过服务端探测
+      // （对齐 Java SDK executeConfigListen: if (cache.isUseLocalConfigInfo()) continue）
+      if (item.useFailover) {
+        continue;
+      }
+      const { dataId, group, md5 } = item;
       this.debug('calling startLongPulling(checkServerConfigInfo), dataId: %s, group: %s', dataId, group);
       probeUpdate.push(dataId, WORD_SEPARATOR);
       probeUpdate.push(group, WORD_SEPARATOR);
@@ -217,6 +227,13 @@ export class ClientWorker extends Base implements IClientWorker {
       } else {
         probeUpdate.push(md5, LINE_SEPARATOR);
       }
+    }
+
+    // 所有订阅项都处于本地 failover：本轮无服务端探针，跳过 HTTP listener API；
+    // 但仍需 bounded delay，避免 startLongPulling while 循环空转占用 CPU（对齐 Java 无探针时不空转）
+    if (probeUpdate.length === 0) {
+      await this.waitBeforeNextLocalCheck();
+      return;
     }
 
     const postData = {};
@@ -240,6 +257,56 @@ export class ClientWorker extends Base implements IClientWorker {
       this.debug('data has changed and will be sync', updateList);
       // 去同步这个 ip 列表的配置
       await this.syncConfigs(updateList);
+    }
+  }
+
+  /**
+   * failover 全量命中导致本轮无服务端探针时的兜底等待，
+   * 防止 startLongPulling while 循环空转占用 CPU。抽成独立方法便于测试替换。
+   * @private
+   */
+  private async waitBeforeNextLocalCheck(): Promise<void> {
+    await sleep(2000);
+  }
+
+  /**
+   * 检查所有订阅项的本地 failover 文件状态（对齐 Java SDK checkLocalConfig）：
+   * - 文件新建 → 切换到 failover 内容并通知监听器
+   * - 文件删除 → 切回服务端配置
+   * - 文件变更（mtime 变化）→ 重新加载并通知监听器
+   * @private
+   */
+  private async checkLocalFailover() {
+    for (const [key, item] of this.subscriptions.entries()) {
+      const failoverKey = this.getSnapshotKeyEncoded(item.dataId, item.group);
+      const mtime = await this.snapshot.getFailoverMtime(failoverKey);
+
+      if (mtime === null) {
+        if (item.useFailover) {
+          item.useFailover = false;
+          item.failoverVersion = null;
+          this.debug('[failover-change] failover file deleted, dataId: %s, group: %s', item.dataId, item.group);
+        }
+        continue;
+      }
+
+      if (!item.useFailover || item.failoverVersion !== mtime) {
+        const content = await this.snapshot.getFailover(failoverKey);
+        if (content === null) {
+          continue;
+        }
+        const isNew = !item.useFailover;
+        item.useFailover = true;
+        item.failoverVersion = mtime;
+        const md5 = getMD5String(content, this.defaultEncoding);
+        if (item.md5 !== md5) {
+          item.md5 = md5;
+          item.content = content;
+          this.debug('[failover-change] failover file %s, dataId: %s, group: %s, md5: %s',
+            isNew ? 'created' : 'changed', item.dataId, item.group, md5);
+          setImmediate(() => this.emit(key, content));
+        }
+      }
     }
   }
 
@@ -371,32 +438,27 @@ export class ClientWorker extends Base implements IClientWorker {
    */
   async getConfig(dataId, group) {
     this.debug('calling getConfig, dataId: %s, group: %s', dataId, group);
-    let content;
     const key = this.getSnapshotKeyEncoded(dataId, group);
-
-    try {
-      content = await this.httpAgent.request(this.apiRoutePath.GET, {
+    const result = await readConfigWithFailover({
+      snapshotKey: key,
+      snapshot: this.snapshot,
+      fetchFromServer: () => this.httpAgent.request(this.apiRoutePath.GET, {
         data: {
           dataId,
           group,
           tenant: this.namespace,
         },
-      });
-    } catch (err) {
-      // Fallback to snapshot cache with backward compatibility
-      const cache = await this.getSnapshot(dataId, group);
-      if (cache !== null) {
-        this._error(err);
-        return cache;
-      }
-      throw err;
-    }
-    
-    // Save to encoded path (even if content is null/empty)
-    await this.snapshot.save(key, content || '');
-    this.debug('got config from server (content=%s), saved to key: %s', 
-               content === null ? 'null' : 'length=' + content.length, key);
-    return content;
+      }),
+      readSnapshotFallback: () => this.getSnapshot(dataId, group),
+      onServerError: err => this._error(err),
+      clearSnapshot: async () => {
+        // 同时清除 encoded 与 legacy 两种表示，避免 legacy 快照被 getSnapshot 迁回后复活已删除配置
+        await this.snapshot.delete(key);
+        await this.snapshot.delete(this.getSnapshotKeyLegacy(dataId, group));
+      },
+    });
+    // ClientWorker.getConfig 对外仍只返回内容，容灾来源（server/snapshot）不对外暴露
+    return result.content;
   }
 
   /**
@@ -439,16 +501,23 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {Boolean} success
    */
   async remove(dataId, group) {
-    await this.httpAgent.request(this.apiRoutePath.REMOVE, {
-      method: 'DELETE',
-      data: {
-        dataId,
-        group,
-        tenant: this.namespace,
-      },
-      dataAsQueryString: true,
+    const encodedKey = this.getSnapshotKeyEncoded(dataId, group);
+    // 与 getConfig 共用快照锁：远端 remove + 本地清理串行，避免在途 get 晚到后复活快照
+    return await withSnapshotLock(this.snapshot, encodedKey, async () => {
+      await this.httpAgent.request(this.apiRoutePath.REMOVE, {
+        method: 'DELETE',
+        data: {
+          dataId,
+          group,
+          tenant: this.namespace,
+        },
+        dataAsQueryString: true,
+      });
+      // 同步清理本地快照（encoded + legacy），避免服务端已删除的配置残留在缓存里复活
+      await this.snapshot.delete(this.getSnapshotKeyEncoded(dataId, group));
+      await this.snapshot.delete(this.getSnapshotKeyLegacy(dataId, group));
+      return true;
     });
-    return true;
   }
 
   /**
