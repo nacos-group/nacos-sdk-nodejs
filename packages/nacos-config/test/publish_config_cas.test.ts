@@ -46,16 +46,17 @@ describe('test/publish_config_cas.test.ts', () => {
       client = new ClientWorker({ configuration });
     });
 
-    it('should pass casMd5 in publish request', async () => {
+    it('should pass casMd5 in request headers', async () => {
       let captured;
       mm(client.httpAgent, 'request', async (path, options) => {
         captured = options;
       });
       const success = await client.publishSingle('cas-data-id', 'cas-group', 'content-v2', { casMd5: 'md5-of-v1' });
       assert(success === true);
-      assert(captured.data.casMd5 === 'md5-of-v1');
+      assert(captured.headers.casMd5 === 'md5-of-v1');
       assert(captured.data.dataId === 'cas-data-id');
       assert(captured.data.content === 'content-v2');
+      assert(!('casMd5' in captured.data));
     });
 
     it('should not pass casMd5 when absent', async () => {
@@ -64,6 +65,7 @@ describe('test/publish_config_cas.test.ts', () => {
         captured = options;
       });
       await client.publishSingle('cas-data-id', 'cas-group', 'content-v1');
+      assert(!('casMd5' in captured.headers));
       assert(!('casMd5' in captured.data));
     });
   });
@@ -162,6 +164,56 @@ describe('test/publish_config_cas.test.ts', () => {
       assert(success === true);
       assert(capturedOptions.casMd5 === 'md5-of-v1');
       assert(capturedOptions.type === 'properties');
+    });
+  });
+
+  describe('ClientWorker.publishConfigCas conflict (HTTP transport)', () => {
+    let client: ClientWorker;
+
+    before(() => {
+      const configuration = createDefaultConfiguration({
+        serverAddr: '127.0.0.1:8848',
+        namespace: '',
+        cacheDir,
+      });
+      const snapshot = new Snapshot({ configuration });
+      const serverMgr = new ServerListManager({ configuration });
+      const httpAgent = new HttpAgent({ configuration });
+      configuration.merge({ snapshot, serverMgr, httpAgent });
+      client = new ClientWorker({ configuration });
+    });
+
+    it('should return false when server responds 409 (casMd5 mismatched)', async () => {
+      const conflictErr: any = new Error('[Client Worker] Nacos server config being modified concurrently');
+      conflictErr.name = 'NacosServerConflictError';
+      mm(client.httpAgent, 'request', async () => {
+        throw conflictErr;
+      });
+      const success = await client.publishConfigCas('cas-data-id', 'cas-group', 'content-v2', 'stale-md5');
+      assert(success === false);
+    });
+
+    it('should return false when server responds 500 with cas publish fail body', async () => {
+      const casFailErr: any = new Error('Nacos Server Error Status: 500');
+      casFailErr.name = 'NacosServerResponseError';
+      casFailErr.body = 'caused: Cas publish fail, server md5 may have changed.;';
+      mm(client.httpAgent, 'request', async () => {
+        throw casFailErr;
+      });
+      const success = await client.publishConfigCas('cas-data-id', 'cas-group', 'content-v2', 'stale-md5');
+      assert(success === false);
+    });
+
+    it('should rethrow non-conflict errors', async () => {
+      const otherErr: any = new Error('Nacos Server Error Status: 500');
+      otherErr.name = 'NacosServerResponseError';
+      mm(client.httpAgent, 'request', async () => {
+        throw otherErr;
+      });
+      await assert.rejects(
+        () => client.publishConfigCas('cas-data-id', 'cas-group', 'content-v2', 'md5-of-v1'),
+        /Status: 500/
+      );
     });
   });
 });

@@ -426,13 +426,17 @@ export class ClientWorker extends Base implements IClientWorker {
       type: options && options.type,
       appName: this.appName
     };
+    // 服务端从请求头读取 casMd5（ConfigController: request.getHeader("casMd5")），
+    // 放在表单参数里会被忽略，导致退化为无条件发布
+    const headers: { [key: string]: string } = {};
     if (options && options.casMd5) {
-      data.casMd5 = options.casMd5;
+      headers.casMd5 = options.casMd5;
     }
     await this.httpAgent.request(this.apiRoutePath.PUBLISH, {
       method: 'POST',
       encode: true,
       data,
+      headers,
     });
     return true;
   }
@@ -448,7 +452,23 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {Boolean} success
    */
   async publishConfigCas(dataId, group, content, casMd5, options?: UnitOptions) {
-    return await this.publishSingle(dataId, group, content, { ...options, casMd5 });
+    try {
+      return await this.publishSingle(dataId, group, content, { ...options, casMd5 });
+    } catch (err) {
+      // casMd5 与服务端当前 md5 不一致时：
+      // - 部分版本服务端返回 409 Conflict
+      // - Nacos 2.x 返回 500，body 为 "Cas publish fail, server md5 may have changed"
+      // 两种情况都属于 CAS 校验失败，与 gRPC 路径一致返回 false
+      const isCasConflict = err && (
+        /ServerConflictError$/.test(err.name) ||
+        /cas publish fail/i.test(String(err.body || ''))
+      );
+      if (isCasConflict) {
+        this.debug('publishConfigCas failed, casMd5 mismatched, dataId: %s, group: %s', dataId, group);
+        return false;
+      }
+      throw err;
+    }
   }
 
   /**
