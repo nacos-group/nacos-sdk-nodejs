@@ -135,6 +135,20 @@ export class NacosConfigClient extends APIClientBase implements BaseClient {
   }
 
   /**
+   * 以 CAS 方式发布配置，仅当服务端当前配置的 md5 与 casMd5 一致时才发布成功
+   * @param {String} dataId - id of the data
+   * @param {String} group - group name of the data
+   * @param {String} content - config value
+   * @param {String} casMd5 - md5 of the expected current config content
+   * @param {Object} [options]
+   * @return {Boolean} success
+   */
+  async publishConfigCas(dataId, group, content, casMd5, options?) {
+    checkParameters(dataId, group);
+    return await this._client.publishConfigCas(dataId, group, content, casMd5, options);
+  }
+
+  /**
    * 删除配置
    * @param {String} dataId - id of the data
    * @param {String} group - group name of the data

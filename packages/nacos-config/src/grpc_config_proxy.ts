@@ -120,7 +120,7 @@ export class GrpcConfigProxy extends Base {
   /**
    * Publish config via gRPC ConfigPublishRequest.
    */
-  async publishSingle(dataId: string, group: string, tenant: string | undefined, content: string, type?: string): Promise<boolean> {
+  async publishSingle(dataId: string, group: string, tenant: string | undefined, content: string, type?: string, casMd5?: string): Promise<boolean> {
     const resolvedTenant = tenant != null ? tenant : this._namespace;
     this._logger.info('[GrpcConfigProxy] publishSingle dataId=%s group=%s tenant=%s', dataId, group, resolvedTenant);
     const request: any = {
@@ -131,6 +131,9 @@ export class GrpcConfigProxy extends Base {
     };
     if (type) {
       request.type = type;
+    }
+    if (casMd5) {
+      request.casMd5 = casMd5;
     }
     const response = await this._transportClient.request(request, 'ConfigPublishRequest');
     return response.resultCode === 200;

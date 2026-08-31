@@ -86,6 +86,14 @@ await configClient.ready();
 // publish config
 await configClient.publishSingle('test', 'DEFAULT_GROUP', 'hello=world');
 
+// publish config with CAS (compare-and-set):
+// succeeds only when the md5 of the current server-side config equals casMd5
+const crypto = require('crypto');
+const currentContent = await configClient.getConfig('test', 'DEFAULT_GROUP');
+const casMd5 = crypto.createHash('md5').update(currentContent || '').digest('hex');
+const published = await configClient.publishConfigCas('test', 'DEFAULT_GROUP', 'hello=nacos', casMd5);
+console.log('cas publish:', published); // false when casMd5 mismatched
+
 // get config
 const content = await configClient.getConfig('test', 'DEFAULT_GROUP');
 console.log('content:', content);
@@ -164,6 +172,7 @@ gRPC advantages over HTTP:
   - dataId {String} data id
   - group {String} group name
 - `publishSingle(dataId, group, content)` Publish config.
+- `publishConfigCas(dataId, group, content, casMd5)` Publish config with CAS semantics, succeeds only when the md5 of the current server-side config equals `casMd5` (aligned with Java SDK `ConfigService#publishConfigCas`).
   - dataId {String} data id
   - group {String} group name
   - content {String} content to publish

@@ -303,6 +303,35 @@ export class DataClient extends Base implements BaseClient {
   }
 
   /**
+   * 以 CAS 方式发布配置，仅当服务端当前配置的 md5 与 casMd5 一致时才发布成功
+   * @param {String} dataId - id of the data
+   * @param {String} group - group name of the data
+   * @param {String} content - config value
+   * @param {String} casMd5 - md5 of the expected current config content
+   * @param {Object} options
+   *   - {Stirng} unit - which unit you want to connect, default is current unit
+   *   - {String} type - config type, e.g., 'text', 'json', 'xml', 'html', 'properties', 'yaml', etc.
+   * @return {Boolean} success, false when casMd5 mismatched (gRPC transport)
+   */
+  async publishConfigCas(dataId, group, content, casMd5, options?: UnitOptions) {
+    checkParameters(dataId, group);
+    if (!casMd5) {
+      throw new Error('[DataClient] publishConfigCas requires casMd5, use getConfig to fetch the current md5');
+    }
+    if (this._grpcConfigProxy) {
+      return await this._grpcConfigProxy.publishSingle(
+        dataId, group,
+        this.configuration.get(ClientOptionKeys.NAMESPACE),
+        content,
+        options && options.type,
+        casMd5
+      );
+    }
+    const client = this.getClient(options);
+    return await client.publishConfigCas(dataId, group, content, casMd5, options);
+  }
+
+  /**
    * 删除配置
    * @param {String} dataId - id of the data
    * @param {String} group - group name of the data

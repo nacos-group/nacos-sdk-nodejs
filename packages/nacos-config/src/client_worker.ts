@@ -414,22 +414,61 @@ export class ClientWorker extends Base implements IClientWorker {
    * @param {String} content - config value
    * @param {Object} [options]
    *   - {String} type - type of the data
+   *   - {String} casMd5 - CAS md5 of the expected config content, publish fails when mismatched
    * @return {Boolean} success
    */
   async publishSingle(dataId, group, content, options?: UnitOptions) {
+    const data: { [key: string]: string } = {
+      dataId,
+      group,
+      content,
+      tenant: this.namespace,
+      type: options && options.type,
+      appName: this.appName
+    };
+    // 服务端从请求头读取 casMd5（ConfigController: request.getHeader("casMd5")），
+    // 放在表单参数里会被忽略，导致退化为无条件发布
+    const headers: { [key: string]: string } = {};
+    if (options && options.casMd5) {
+      headers.casMd5 = options.casMd5;
+    }
     await this.httpAgent.request(this.apiRoutePath.PUBLISH, {
       method: 'POST',
       encode: true,
-      data: {
-        dataId,
-        group,
-        content,
-        tenant: this.namespace,
-        type: options && options.type,
-        appName: this.appName
-      },
+      data,
+      headers,
     });
     return true;
+  }
+
+  /**
+   * 以 CAS 方式发布配置，仅当服务端当前配置的 md5 与 casMd5 一致时才发布成功
+   * @param {String} dataId - id of the data
+   * @param {String} group - group name of the data
+   * @param {String} content - config value
+   * @param {String} casMd5 - md5 of the expected current config content
+   * @param {Object} [options]
+   *   - {String} type - type of the data
+   * @return {Boolean} success
+   */
+  async publishConfigCas(dataId, group, content, casMd5, options?: UnitOptions) {
+    try {
+      return await this.publishSingle(dataId, group, content, { ...options, casMd5 });
+    } catch (err) {
+      // casMd5 与服务端当前 md5 不一致时：
+      // - 部分版本服务端返回 409 Conflict
+      // - Nacos 2.x 返回 500，body 为 "Cas publish fail, server md5 may have changed"
+      // 两种情况都属于 CAS 校验失败，与 gRPC 路径一致返回 false
+      const isCasConflict = err && (
+        /ServerConflictError$/.test(err.name) ||
+        /cas publish fail/i.test(String(err.body || ''))
+      );
+      if (isCasConflict) {
+        this.debug('publishConfigCas failed, casMd5 mismatched, dataId: %s, group: %s', dataId, group);
+        return false;
+      }
+      throw err;
+    }
   }
 
   /**
