@@ -361,6 +361,14 @@ export interface ClientOptions {
   decodeRes?: (res: any, method?: string, encoding?: string) => any;
   /** Transport protocol: 'grpc' uses gRPC, 'http' uses HTTP long-polling (default: 'http') */
   transport?: 'grpc' | 'http';
+  /** Custom KMS client implementing generateDataKey/decrypt; overrides the built-in Alibaba Cloud client */
+  kmsClient?: any;
+  /** KMS OpenAPI endpoint, e.g. 'kms.cn-hangzhou.aliyuncs.com'; auto-resolved from kmsRegionId when omitted */
+  kmsEndpoint?: string;
+  /** KMS region id used to resolve the endpoint when kmsEndpoint is omitted */
+  kmsRegionId?: string;
+  /** KMS customer master key id used to generate data keys (default: 'alias/acs/mse') */
+  kmsKeyId?: string;
 }
 
 export enum ClientOptionKeys {
@@ -400,7 +408,11 @@ export enum ClientOptionKeys {
   IDENTITY_KEY = 'identityKey',
   IDENTITY_VALUE = 'identityValue',
   DECODE_RES = 'decodeRes',
-  ENDPOINT_QUERY_PARAMS = 'endpointQueryParams'
+  ENDPOINT_QUERY_PARAMS = 'endpointQueryParams',
+  KMS_CLIENT = 'kmsClient',
+  KMS_ENDPOINT = 'kmsEndpoint',
+  KMS_REGION_ID = 'kmsRegionId',
+  KMS_KEY_ID = 'kmsKeyId'
 }
 
 export interface IConfiguration {

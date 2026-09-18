@@ -348,7 +348,7 @@ describe('test/local_cache.test.ts', () => {
       let serverCalled = false;
       mm((client as any)._grpcConfigProxy, 'getConfig', async () => {
         serverCalled = true;
-        return 'server-config';
+        return { content: 'server-config' };
       });
       const snapshotKey = (client as any)._getSnapshotKey('fo-data-id', 'fo-group');
       const failoverFile = (client as any).snapshot.getFailoverFile(snapshotKey);
@@ -362,7 +362,7 @@ describe('test/local_cache.test.ts', () => {
 
     it('should save snapshot when server responds', async () => {
       const client = createGrpcClient();
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => 'server-config');
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: 'server-config' }));
       const snapshotKey = (client as any)._getSnapshotKey('snap-data-id', 'fo-group');
 
       const content = await client.getConfig('snap-data-id', 'fo-group');
@@ -403,7 +403,7 @@ describe('test/local_cache.test.ts', () => {
       await (client as any).snapshot.save(snapshotKey, 'stale-content');
       assert(await (client as any).snapshot.get(snapshotKey) === 'stale-content');
       // gRPC getConfig 对缺失配置返回空串，空内容应按删除处理（对齐 Java saveSnapshot(null)）
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => '');
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: '' }));
 
       const content = await client.getConfig('blank-data-id', 'fo-group');
       assert(content === '');
@@ -466,7 +466,7 @@ describe('test/local_cache.test.ts', () => {
       await (client as any)._checkGrpcLocalFailover();
       assert((client as any)._grpcFailoverState.get(key).useFailover === true);
 
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => 'server-config');
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: 'server-config' }));
       await rimraf(failoverFile);
       await (client as any)._checkGrpcLocalFailover();
       const state = (client as any)._grpcFailoverState.get(key);
@@ -479,7 +479,7 @@ describe('test/local_cache.test.ts', () => {
     it('should deliver server push when not in failover mode', async () => {
       const client = createGrpcClient();
       let serverContent = 'server-config';
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => serverContent);
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: serverContent }));
       mm((client as any)._grpcConfigProxy, 'addListener', async () => {});
       const received: string[] = [];
       client.subscribe({ dataId: 'push-ok-data-id', group: 'fo-group' }, (content: string) => received.push(content));
@@ -494,7 +494,7 @@ describe('test/local_cache.test.ts', () => {
     it('should ignore server push while in failover mode', async () => {
       const client = createGrpcClient();
       let serverContent = 'server-config';
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => serverContent);
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: serverContent }));
       mm((client as any)._grpcConfigProxy, 'addListener', async () => {});
       const received: string[] = [];
       client.subscribe({ dataId: 'push-data-id', group: 'fo-group' }, (content: string) => received.push(content));
@@ -518,7 +518,7 @@ describe('test/local_cache.test.ts', () => {
       const store = memSnapshot(client);
       const snapshotKey = (client as any)._getSnapshotKey('io-data-id', 'fo-group');
       const fetchGate = deferred<string>();
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => await fetchGate.promise);
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: await fetchGate.promise }));
       mm((client as any)._grpcConfigProxy, 'remove', async () => true);
 
       // get 先开始并停在服务端拉取处
@@ -542,7 +542,7 @@ describe('test/local_cache.test.ts', () => {
       memSnapshot(client);
       const gate = deferred<string>();
       let addCalls = 0;
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => await gate.promise);
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: await gate.promise }));
       mm((client as any)._grpcConfigProxy, 'addListener', async () => { addCalls++; });
       mm((client as any)._grpcConfigProxy, 'removeListener', async () => {});
       const received: string[] = [];
@@ -563,7 +563,7 @@ describe('test/local_cache.test.ts', () => {
       memSnapshot(client);
       const gate = deferred<string>();
       let addCalls = 0;
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => await gate.promise);
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: await gate.promise }));
       mm((client as any)._grpcConfigProxy, 'addListener', async () => { addCalls++; });
       mm((client as any)._grpcConfigProxy, 'removeListener', async () => {});
       const received: string[] = [];
@@ -585,9 +585,9 @@ describe('test/local_cache.test.ts', () => {
       const slow = deferred<string>();
       mm((client as any)._grpcConfigProxy, 'getConfig', async () => {
         call++;
-        if (call === 1) { return 'init'; }      // subscribe 初始化
-        if (call === 2) { return await slow.promise; } // event1 -> 'old'（延迟）
-        return 'new';                             // event2 -> 'new'
+        if (call === 1) { return { content: 'init' }; }      // subscribe 初始化
+        if (call === 2) { return { content: await slow.promise }; } // event1 -> 'old'（延迟）
+        return { content: 'new' };                             // event2 -> 'new'
       });
       mm((client as any)._grpcConfigProxy, 'addListener', async () => {});
       const received: string[] = [];
@@ -621,7 +621,7 @@ describe('test/local_cache.test.ts', () => {
 
       let calls = 0;
       const gate = deferred<string>();
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => { calls++; return await gate.promise; });
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => { calls++; return { content: await gate.promise }; });
 
       const p1 = (client as any)._checkGrpcLocalFailover();
       const p2 = (client as any)._checkGrpcLocalFailover();
@@ -642,7 +642,7 @@ describe('test/local_cache.test.ts', () => {
       let addCalls = 0;
       mm((client as any)._grpcConfigProxy, 'getConfig', async () => {
         serverFetchStarted.resolve();
-        return await fetchGate.promise;
+        return { content: await fetchGate.promise };
       });
       mm((client as any)._grpcConfigProxy, 'addListener', async () => {
         addCalls++;
@@ -677,7 +677,7 @@ describe('test/local_cache.test.ts', () => {
       await fs.writeFile(failoverFile, 'failover-v1');
 
       const added = deferred<void>();
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => 'server-config');
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: 'server-config' }));
       mm((client as any)._grpcConfigProxy, 'addListener', async () => { added.resolve(); });
       const received: string[] = [];
       client.subscribe({ dataId: 'pre-fo-data-id', group: 'fo-group' }, (content: string) => received.push(content));
@@ -692,7 +692,7 @@ describe('test/local_cache.test.ts', () => {
       const client = createGrpcClient();
       memSnapshot(client);
       let addCalls = 0;
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => 'init');
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: 'init' }));
       mm((client as any)._grpcConfigProxy, 'addListener', async () => { addCalls++; });
       mm((client as any)._grpcConfigProxy, 'removeListener', async () => {});
       const r1: string[] = [];
@@ -708,7 +708,7 @@ describe('test/local_cache.test.ts', () => {
 
       // 退订其中一个，另一个仍收 push
       client.unSubscribe({ dataId: 'dbl-data-id', group: 'fo-group' }, l1);
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => 'v2');
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: 'v2' }));
       (client as any)._grpcConfigProxy.emit('configChanged', { dataId: 'dbl-data-id', group: 'fo-group', tenant: '' });
       await flush();
 
@@ -720,7 +720,7 @@ describe('test/local_cache.test.ts', () => {
       const client = createGrpcClient();
       memSnapshot(client);
       const order: string[] = [];
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => 'server-config');
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: 'server-config' }));
       const addOld = deferred<void>();
       const addNew = deferred<void>();
       let addCall = 0;
@@ -762,7 +762,7 @@ describe('test/local_cache.test.ts', () => {
       const client = createGrpcClient();
       memSnapshot(client);
       let calls = 0;
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => 'server-config');
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: 'server-config' }));
       mm((client as any)._grpcConfigProxy, 'addListener', async () => {
         calls++;
         if (calls === 1) { throw new Error('addListener failed'); }
@@ -796,7 +796,7 @@ describe('test/local_cache.test.ts', () => {
       let failGet = true;
       mm((client as any)._grpcConfigProxy, 'getConfig', async () => {
         if (failGet) { throw new Error('server down'); }
-        return 'server-config';
+        return { content: 'server-config' };
       });
       // addListener 始终成功；记录调用次数与注册所用 md5
       let addCalls = 0;
@@ -836,7 +836,7 @@ describe('test/local_cache.test.ts', () => {
       memSnapshot(client);
       let getCalls = 0;
       let addCalls = 0;
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => { getCalls++; return 'server-config'; });
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => { getCalls++; return { content: 'server-config' }; });
       mm((client as any)._grpcConfigProxy, 'addListener', async () => { addCalls++; });
       mm((client as any)._grpcConfigProxy, 'removeListener', async () => {});
 
@@ -871,7 +871,7 @@ describe('test/local_cache.test.ts', () => {
       mm((client as any)._grpcConfigProxy, 'getConfig', async () => {
         call++;
         if (call === 1) { throw new Error('server down'); }
-        return 'server-new';
+        return { content: 'server-new' };
       });
 
       // 第一轮：服务端失败 → 回退快照 'server-old'（source==='snapshot'）
@@ -913,7 +913,7 @@ describe('test/local_cache.test.ts', () => {
       const snapshotKey = (client as any)._getSnapshotKey('p22-absent', 'fo-group');
       store.set(snapshotKey, 'stale');
       // 服务端确认不存在（typed getConfig 返回 null）
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => null);
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: null }));
       const content = await client.getConfig('p22-absent', 'fo-group');
       assert(content === '');
       assert(store.has(snapshotKey) === false);
@@ -944,7 +944,7 @@ describe('test/local_cache.test.ts', () => {
     it('P2-4: initial listener throwing does not block addListener; error is observable', async () => {
       const client = createGrpcClient();
       memSnapshot(client);
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => 'init-content');
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: 'init-content' }));
       let addCalled: boolean = false;
       mm((client as any)._grpcConfigProxy, 'addListener', async () => { addCalled = true; });
       const errors: Error[] = [];
@@ -1000,7 +1000,7 @@ describe('test/local_cache.test.ts', () => {
       anyClient._grpcFailoverState = new Map();
       anyClient._grpcFailoverState.set(key, { dataId: 'p24-push', group: 'fo-group', useFailover: false, failoverVersion: null, content: null, listenerRegistered: true, listenerMd5: '' });
       memSnapshot(client);
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => 'pushed-content');
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: 'pushed-content' }));
       const errors: Error[] = [];
       client.removeAllListeners('error');
       client.on('error', (err: Error) => { errors.push(err); });
@@ -1024,7 +1024,7 @@ describe('test/local_cache.test.ts', () => {
       anyClient._grpcFailoverState = new Map();
       anyClient._grpcFailoverState.set(key, { dataId: 'p24-async', group: 'fo-group', useFailover: false, failoverVersion: null, content: null, listenerRegistered: true, listenerMd5: '' });
       memSnapshot(client);
-      mm((client as any)._grpcConfigProxy, 'getConfig', async () => 'async-pushed');
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: 'async-pushed' }));
       const errors: Error[] = [];
       client.removeAllListeners('error');
       client.on('error', (err: Error) => { errors.push(err); });
@@ -1035,6 +1035,88 @@ describe('test/local_cache.test.ts', () => {
       // 后续 listener 仍同步收到内容
       assert(received.indexOf('async-pushed') >= 0);
       assert(errors.some(e => e.message === 'async-push-boom'));
+    });
+
+    describe('KMS cipher snapshot pairing (gRPC)', () => {
+      // ---- KMS cipher：content 快照与 EDK 快照的并发成对性（共享快照锁保证）----
+      // 正确性由 #154 的 readConfigWithFailover 共享 withSnapshotLock 提供，KMS 的 EDK
+      // 双写/双删纳入同一临界区。用一次性阻断“首个 EDK 写入”制造交叉窗口作为回归保护。
+
+      it('KMS: concurrent same-key reads keep the content/EDK snapshot pair matched (never crossed)', async () => {
+        const client = createGrpcClient();
+        const dataId = 'cipher-kms-aes-128-pair-grpc';
+        const group = 'fo-group';
+        const contentKey = (client as any)._getSnapshotKey(dataId, group);
+        const edkKey = (client as any)._getEncryptedDataKeySnapshotKey(dataId, group);
+        const store = new Map<string, string>();
+        const edkGate = deferred<void>();
+        let edkSaves = 0;
+        mm((client as any).snapshot, 'get', async (key: string) => (store.has(key) ? store.get(key) : null));
+        mm((client as any).snapshot, 'getFailover', async () => null);
+        mm((client as any).snapshot, 'getFailoverMtime', async () => null);
+        mm((client as any).snapshot, 'delete', async (key: string) => { store.delete(key); });
+        mm((client as any).snapshot, 'save', async (key: string, value: string) => {
+          // 阻塞第一个 EDK 写入，若无锁则第二个读会在此窗口写入并造成错配
+          if (key === edkKey) { edkSaves++; if (edkSaves === 1) { await edkGate.promise; } }
+          if (!value) { store.delete(key); } else { store.set(key, value); }
+        });
+        // 两对自洽的（content, encryptedDataKey）：v1 配 edk-1，v2 配 edk-2
+        let call = 0;
+        mm((client as any)._grpcConfigProxy, 'getConfig', async () => {
+          call++;
+          if (call === 1) { return { content: 'cipher-v1', encryptedDataKey: 'edk-1' }; }
+          return { content: 'cipher-v2', encryptedDataKey: 'edk-2' };
+        });
+
+        const a = (client as any)._getConfigWithCache(dataId, group);
+        await flush();
+        const b = (client as any)._getConfigWithCache(dataId, group);
+        await flush();
+        edkGate.resolve();
+        await Promise.all([ a, b ]);
+        await flush();
+
+        const finalContent = store.get(contentKey);
+        const finalEdk = store.get(edkKey);
+        // 落盘的 content 与 edk 必须成对：要么 (v1, edk-1)，要么 (v2, edk-2)，绝不错配
+        const matched = (finalContent === 'cipher-v1' && finalEdk === 'edk-1') ||
+                        (finalContent === 'cipher-v2' && finalEdk === 'edk-2');
+        assert(matched === true);
+      });
+
+      it('KMS: concurrent get and remove leave neither content nor EDK snapshot', async () => {
+        const client = createGrpcClient();
+        const dataId = 'cipher-kms-aes-128-rmpair-grpc';
+        const group = 'fo-group';
+        const contentKey = (client as any)._getSnapshotKey(dataId, group);
+        const edkKey = (client as any)._getEncryptedDataKeySnapshotKey(dataId, group);
+        const store = new Map<string, string>();
+        // 预置一对旧快照；get 在途、remove 先完成后，二者都不应残留或被复活
+        store.set(contentKey, 'old-cipher');
+        store.set(edkKey, 'old-edk');
+        mm((client as any).snapshot, 'get', async (key: string) => (store.has(key) ? store.get(key) : null));
+        mm((client as any).snapshot, 'getFailover', async () => null);
+        mm((client as any).snapshot, 'getFailoverMtime', async () => null);
+        mm((client as any).snapshot, 'save', async (key: string, value: string) => { if (!value) { store.delete(key); } else { store.set(key, value); } });
+        mm((client as any).snapshot, 'delete', async (key: string) => { store.delete(key); });
+        const fetchGate = deferred<void>();
+        mm((client as any)._grpcConfigProxy, 'getConfig', async () => {
+          await fetchGate.promise;
+          return { content: 'new-cipher', encryptedDataKey: 'new-edk' };
+        });
+        mm((client as any)._grpcConfigProxy, 'remove', async () => true);
+
+        const getP = (client as any)._getConfigWithCache(dataId, group);
+        await flush();
+        const removeP = client.remove(dataId, group);
+        await flush();
+        fetchGate.resolve();
+        await Promise.all([ getP, removeP ]);
+        await flush();
+
+        assert(store.has(contentKey) === false, 'content snapshot must not survive remove');
+        assert(store.has(edkKey) === false, 'EDK snapshot must not survive remove');
+      });
     });
   });
 
@@ -1054,15 +1136,15 @@ describe('test/local_cache.test.ts', () => {
 
     it('P2-2: returns content on resultCode 200 (empty string allowed)', async () => {
       const empty = makeProxy(() => ({ resultCode: 200, content: '' }));
-      assert(await empty.getConfig('d', 'g') === '');
+      assert((await empty.getConfig('d', 'g')).content === '');
       const some = makeProxy(() => ({ resultCode: 200, content: 'hello' }));
-      assert(await some.getConfig('d', 'g') === 'hello');
+      assert((await some.getConfig('d', 'g')).content === 'hello');
     });
 
     it('P2-2: returns null on errorCode 300 (config not found)', async () => {
       const proxy = makeProxy(() => ({ resultCode: 500, errorCode: 300, message: 'config data not exist' }));
       const ret = await proxy.getConfig('d', 'g');
-      assert(ret === null);
+      assert(ret.content === null);
     });
 
     it('P2-2: throws with diagnostic fields on 400 conflict', async () => {
