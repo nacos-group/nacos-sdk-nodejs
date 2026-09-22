@@ -32,12 +32,26 @@ import { checkParameters } from './utils';
 import { HttpAgent } from './http_agent';
 import { Configuration } from './configuration';
 import { GrpcConfigProxy } from './grpc_config_proxy';
+import { ConfigQueryResult } from './grpc_config_proxy';
 import { GrpcConnection, GrpcTransportClient } from 'nacos-common';
 import { createConfigCipher, ConfigCipher } from './cipher';
 import { resolveAliyunCredentialsAsync } from './aliyun_auth';
+import { KeyedAsyncQueue } from './keyed_queue';
+import { withSnapshotLock } from './disaster_recovery';
+import * as path from 'path';
+import * as crypto from 'crypto';
 import * as assert from 'assert';
 
 const Base = require('sdk-base');
+
+interface GrpcFailoverState {
+  dataId: string;
+  group: string;
+  useFailover: boolean;
+  failoverVersion: number | null;
+  content: string | null;
+  md5: string;
+}
 
 
 export class DataClient extends Base implements BaseClient {
@@ -53,6 +67,10 @@ export class DataClient extends Base implements BaseClient {
   private _grpcConfigProxy: GrpcConfigProxy | null;
   private _grpcSubscribers: Map<string, Function[]> | null;
   private _cipher: ConfigCipher;
+  private _grpcFailoverState: Map<string, GrpcFailoverState>;
+  private _grpcOpQueue: KeyedAsyncQueue;
+  private _failoverWatcher: any;
+  private _closed: boolean;
 
   constructor(options: ClientOptions) {
     if(!options.endpoint && !options.serverAddr) {
@@ -88,6 +106,10 @@ export class DataClient extends Base implements BaseClient {
     this._grpcTransportClient = null;
     this._grpcConfigProxy = null;
     this._grpcSubscribers = null;
+    this._grpcFailoverState = new Map();
+    this._grpcOpQueue = new KeyedAsyncQueue();
+    this._failoverWatcher = null;
+    this._closed = false;
 
     this.snapshot = this.getSnapshot();
     (<any>this.snapshot).on('error', err => this.throwError(err));
@@ -214,34 +236,23 @@ export class DataClient extends Base implements BaseClient {
       const key = `${dataId}@@${group}`;
       if (!this._grpcSubscribers) {
         this._grpcSubscribers = new Map();
-        this._grpcConfigProxy.on('configChanged', async (evt) => {
-          const evtKey = `${evt.dataId}@@${evt.group}`;
-          const listeners = this._grpcSubscribers!.get(evtKey);
-          if (listeners && listeners.length > 0) {
-            try {
-              const content = await this._grpcConfigProxy!.getConfig(evt.dataId, evt.group);
-              for (const fn of listeners) { fn(content); }
-            } catch (err) {
-              this.throwError(err);
-            }
-          }
-        });
+        this._grpcConfigProxy.on('configChanged', evt => this._handleGrpcConfigChanged(evt));
       }
       const listeners = this._grpcSubscribers.get(key) || [];
       listeners.push(listener);
       this._grpcSubscribers.set(key, listeners);
-      // Get current content and call listener immediately
-      this._grpcConfigProxy.getConfig(dataId, group).then(content => {
+      if (!this._grpcFailoverState.has(key)) {
+        this._grpcFailoverState.set(key, { dataId, group, useFailover: false, failoverVersion: null, content: null, md5: '' });
+      }
+      this._startFailoverWatcher();
+      const state = this._grpcFailoverState.get(key)!;
+      this._grpcOpQueue.run(key, async () => {
+        if (this._closed || !this._hasGrpcListener(key, listener)) return;
+        const content = await this._getGrpcConfig(dataId, group, state);
+        if (!this._hasGrpcListener(key, listener)) return;
         if (content) listener(content);
-      }).catch(() => {});
-      // Register gRPC listen (need MD5 of current content)
-      this._grpcConfigProxy.getConfig(dataId, group).then(content => {
-        const crypto = require('crypto');
-        const encrypted = this._cipher.getEncryptedConfig(dataId, group);
-        const md5Content = encrypted ? encrypted.content : content;
-        const md5 = md5Content ? crypto.createHash('md5').update(md5Content).digest('hex') : '';
-        this._grpcConfigProxy!.addListener(dataId, group, md5).catch(() => {});
-      }).catch(() => {});
+        await this._grpcConfigProxy!.addListener(dataId, group, state.useFailover ? '' : (state.md5 || ''));
+      }).catch(err => this.throwError(err));
       return this;
     }
 
@@ -263,12 +274,15 @@ export class DataClient extends Base implements BaseClient {
           if (idx >= 0) listeners.splice(idx, 1);
           if (listeners.length === 0) {
             this._grpcSubscribers.delete(key);
-            this._grpcConfigProxy.removeListener(dataId, group).catch(() => {});
+            this._grpcFailoverState.delete(key);
+            this._grpcOpQueue.run(key, () => this._grpcConfigProxy!.removeListener(dataId, group)).catch(() => {});
           }
         } else {
           this._grpcSubscribers.delete(key);
-          this._grpcConfigProxy.removeListener(dataId, group).catch(() => {});
+          this._grpcFailoverState.delete(key);
+          this._grpcOpQueue.run(key, () => this._grpcConfigProxy!.removeListener(dataId, group)).catch(() => {});
         }
+        if (this._grpcSubscribers.size === 0) this._stopFailoverWatcher();
       }
       return this;
     }
@@ -289,7 +303,10 @@ export class DataClient extends Base implements BaseClient {
   async getConfig(dataId, group, options?) {
     checkParameters(dataId, group);
     if (this._grpcConfigProxy) {
-      return await this._grpcConfigProxy.getConfig(dataId, group, this.configuration.get(ClientOptionKeys.NAMESPACE));
+      const key = `${dataId}@@${group}`;
+      const state = this._grpcFailoverState.get(key) ||
+        { dataId, group, useFailover: false, failoverVersion: null, content: null, md5: '' };
+      return await this._getGrpcConfig(dataId, group, state);
     }
     const client = this.getClient(options);
     return await client.getConfig(dataId, group);
@@ -455,6 +472,10 @@ export class DataClient extends Base implements BaseClient {
   }
 
   close() {
+    this._closed = true;
+    this._stopFailoverWatcher();
+    this._grpcSubscribers && this._grpcSubscribers.clear();
+    this._grpcFailoverState.clear();
     if (this._grpcConfigProxy) {
       this._grpcConfigProxy.close();
     }
@@ -500,6 +521,150 @@ export class DataClient extends Base implements BaseClient {
   private throwError(err) {
     if (err) {
       setImmediate(() => this.emit('error', err));
+    }
+  }
+
+  private getGrpcSnapshotKey(dataId: string, group: string): string {
+    const namespace = this.configuration.get(ClientOptionKeys.NAMESPACE) || 'default_tenant';
+    const unit = this.configuration.get(ClientOptionKeys.UNIT) || CURRENT_UNIT;
+    return path.join('config', encodeURIComponent(unit), encodeURIComponent(namespace),
+      encodeURIComponent(group), encodeURIComponent(dataId));
+  }
+
+  private getGrpcSnapshotEncryptedDataKey(dataId: string, group: string): string {
+    return this.getGrpcSnapshotKey(dataId, group) + '.encryptedDataKey';
+  }
+
+  private async getFailover(key: string): Promise<string | null> {
+    const snapshot: any = this.snapshot as any;
+    return typeof snapshot.getFailover === 'function' ? snapshot.getFailover(key) : null;
+  }
+
+  private async getFailoverMtime(key: string): Promise<number | null> {
+    const snapshot: any = this.snapshot as any;
+    return typeof snapshot.getFailoverMtime === 'function' ? snapshot.getFailoverMtime(key) : null;
+  }
+
+  private async _getGrpcConfig(dataId: string, group: string, state: GrpcFailoverState): Promise<string> {
+    const key = this.getGrpcSnapshotKey(dataId, group);
+    const failover = await this.getFailover(key);
+    if (failover !== null) {
+      state.useFailover = true;
+      state.failoverVersion = await this.getFailoverMtime(key);
+      state.content = failover;
+      state.md5 = crypto.createHash('md5').update(failover).digest('hex');
+      return failover;
+    }
+
+    return withSnapshotLock(this.snapshot, key, async () => {
+      const lockedFailover = await this.getFailover(key);
+      if (lockedFailover !== null) {
+        state.useFailover = true;
+        state.failoverVersion = await this.getFailoverMtime(key);
+        state.content = lockedFailover;
+        state.md5 = crypto.createHash('md5').update(lockedFailover).digest('hex');
+        return lockedFailover;
+      }
+
+      state.useFailover = false;
+      let raw: ConfigQueryResult;
+      try {
+        raw = await this._grpcConfigProxy!.getConfigRaw(dataId, group, this.configuration.get(ClientOptionKeys.NAMESPACE));
+      } catch (err) {
+        const cached = await this.snapshot.get(key);
+        if (cached === null) throw err;
+        const edk = await this.snapshot.get(this.getGrpcSnapshotEncryptedDataKey(dataId, group));
+        const plaintext = await this._cipher.decrypt(dataId, group, cached, edk || undefined);
+        this.throwError(err);
+        state.content = plaintext;
+        state.md5 = crypto.createHash('md5').update(cached).digest('hex');
+        return plaintext;
+      }
+
+      state.md5 = raw.content ? crypto.createHash('md5').update(raw.content).digest('hex') : '';
+      if (!raw.content) {
+        await this.snapshot.delete(key);
+        await this.snapshot.delete(this.getGrpcSnapshotEncryptedDataKey(dataId, group));
+        state.content = '';
+        return '';
+      }
+      await this.snapshot.save(key, raw.content);
+      const edkKey = this.getGrpcSnapshotEncryptedDataKey(dataId, group);
+      if (raw.encryptedDataKey) await this.snapshot.save(edkKey, raw.encryptedDataKey);
+      else await this.snapshot.delete(edkKey);
+      const plaintext = await this._cipher.decrypt(dataId, group, raw.content, raw.encryptedDataKey);
+      state.content = plaintext;
+      return plaintext;
+    });
+  }
+
+  private _hasGrpcListener(key: string, listener: Function): boolean {
+    const listeners = this._grpcSubscribers && this._grpcSubscribers.get(key);
+    return !!listeners && listeners.indexOf(listener) >= 0 && !this._closed;
+  }
+
+  private _handleGrpcConfigChanged(evt: { dataId: string; group: string }): void {
+    const key = `${evt.dataId}@@${evt.group}`;
+    this._grpcOpQueue.run(key, async () => {
+      const state = this._grpcFailoverState.get(key);
+      const listeners = this._grpcSubscribers && this._grpcSubscribers.get(key);
+      if (!state || !listeners || listeners.length === 0 || state.useFailover) return;
+      const previous = state.content;
+      const content = await this._getGrpcConfig(evt.dataId, evt.group, state);
+      const current = this._grpcSubscribers && this._grpcSubscribers.get(key);
+      if (!current || current.length === 0 || state.useFailover) return;
+      if (content !== previous) {
+        state.content = content;
+        for (const fn of current) fn(content);
+      }
+    }).catch(err => this.throwError(err));
+  }
+
+  private _startFailoverWatcher(): void {
+    if (this._failoverWatcher || !this._grpcSubscribers) return;
+    this._failoverWatcher = setInterval(() => this._checkGrpcFailover().catch(err => this.throwError(err)), 10000);
+  }
+
+  private _stopFailoverWatcher(): void {
+    if (this._failoverWatcher) clearInterval(this._failoverWatcher);
+    this._failoverWatcher = null;
+  }
+
+  private async _checkGrpcFailover(): Promise<void> {
+    if (this._closed || !this._grpcSubscribers) return;
+    for (const [key, state] of this._grpcFailoverState.entries()) {
+      const snapshotKey = this.getGrpcSnapshotKey(state.dataId, state.group);
+      const mtime = await this.getFailoverMtime(snapshotKey);
+      if (mtime !== null) {
+        if (!state.useFailover || state.failoverVersion !== mtime) {
+          const content = await this.getFailover(snapshotKey);
+          if (content === null) continue;
+          this._grpcOpQueue.run(key, async () => {
+            const current = this._grpcSubscribers && this._grpcSubscribers.get(key);
+            if (!current || current.length === 0) return;
+            state.useFailover = true;
+            state.failoverVersion = mtime;
+            if (state.content !== content) {
+              state.content = content;
+              state.md5 = crypto.createHash('md5').update(content).digest('hex');
+              for (const fn of current) fn(content);
+            }
+          }).catch(err => this.throwError(err));
+        }
+      } else if (state.useFailover) {
+        this._grpcOpQueue.run(key, async () => {
+          state.useFailover = false;
+          state.failoverVersion = null;
+          const current = this._grpcSubscribers && this._grpcSubscribers.get(key);
+          if (!current || current.length === 0) return;
+          const previous = state.content;
+          const content = await this._getGrpcConfig(state.dataId, state.group, state);
+          if (previous !== content) {
+            state.content = content;
+            for (const fn of current) fn(content);
+          }
+        }).catch(err => this.throwError(err));
+      }
     }
   }
 

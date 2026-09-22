@@ -21,6 +21,7 @@ import * as path from 'path';
 import * as is from 'is-type-of';
 import { HttpAgent } from './http_agent';
 import { ConfigCipher } from './cipher';
+import { withSnapshotLock } from './disaster_recovery';
 
 const Base = require('sdk-base');
 const gather = require('co-gather');
@@ -115,6 +116,8 @@ export class ClientWorker extends Base implements IClientWorker {
         group,
         md5: null,
         content: null,
+        useFailover: false,
+        failoverVersion: null,
       };
       this.subscriptions.set(key, item);
 
@@ -158,7 +161,13 @@ export class ClientWorker extends Base implements IClientWorker {
       }
 
       const content = result.value;
-      const encrypted = this.cipher && this.cipher.getEncryptedConfig(item.dataId, item.group);
+      const failoverKey = this.getSnapshotKeyEncoded(item.dataId, item.group);
+      const failoverMtime = await this.getFailoverMtime(failoverKey);
+      if (failoverMtime !== null) {
+        item.useFailover = true;
+        item.failoverVersion = failoverMtime;
+      }
+      const encrypted = item.useFailover ? null : this.cipher && this.cipher.getEncryptedConfig(item.dataId, item.group);
       const md5 = getMD5String(encrypted ? encrypted.content : content, this.defaultEncoding);
       // 防止应用启动时，并发请求，导致同一个 key 重复触发
       if (item.md5 !== md5) {
@@ -210,9 +219,14 @@ export class ClientWorker extends Base implements IClientWorker {
     }
 
     const beginTime = Date.now();
+    await this.checkLocalFailover();
     const tenant = this.namespace;
     const probeUpdate = [];
-    for (const { dataId, group, md5 } of this.subscriptions.values()) {
+    for (const item of this.subscriptions.values()) {
+      if (item.useFailover) {
+        continue;
+      }
+      const { dataId, group, md5 } = item;
       this.debug('calling startLongPulling(checkServerConfigInfo), dataId: %s, group: %s', dataId, group);
       probeUpdate.push(dataId, WORD_SEPARATOR);
       probeUpdate.push(group, WORD_SEPARATOR);
@@ -223,6 +237,13 @@ export class ClientWorker extends Base implements IClientWorker {
       } else {
         probeUpdate.push(md5, LINE_SEPARATOR);
       }
+    }
+
+    if (probeUpdate.length === 0) {
+      // All subscriptions are locally overridden; avoid a busy loop and do not
+      // register an empty server-side long poll.
+      await sleep(1000);
+      return;
     }
 
     const postData = {};
@@ -246,6 +267,38 @@ export class ClientWorker extends Base implements IClientWorker {
       this.debug('data has changed and will be sync', updateList);
       // 去同步这个 ip 列表的配置
       await this.syncConfigs(updateList);
+    }
+  }
+
+  /** Keep user-maintained failover files hot without polling the server for them. */
+  private async checkLocalFailover() {
+    const restored: any[] = [];
+    for (const item of this.subscriptions.values()) {
+      const key = this.getSnapshotKeyEncoded(item.dataId, item.group);
+      const mtime = await this.getFailoverMtime(key);
+      if (mtime === null) {
+        if (item.useFailover) {
+          item.useFailover = false;
+          item.failoverVersion = null;
+          restored.push(item);
+        }
+        continue;
+      }
+      if (!item.useFailover || item.failoverVersion !== mtime) {
+        const content = await this.getFailover(key);
+        if (content === null) continue;
+        item.useFailover = true;
+        item.failoverVersion = mtime;
+        const md5 = getMD5String(content, this.defaultEncoding);
+        if (item.md5 !== md5) {
+          item.md5 = md5;
+          item.content = content;
+          setImmediate(() => this.emit(this.formatKey(item), content));
+        }
+      }
+    }
+    if (restored.length > 0) {
+      await this.syncConfigs(restored);
     }
   }
 
@@ -380,6 +433,16 @@ export class ClientWorker extends Base implements IClientWorker {
     return { content, encryptedDataKey: encryptedDataKey || undefined };
   }
 
+  private async getFailover(key: string): Promise<string | null> {
+    const snapshot: any = this.snapshot as any;
+    return typeof snapshot.getFailover === 'function' ? snapshot.getFailover(key) : null;
+  }
+
+  private async getFailoverMtime(key: string): Promise<number | null> {
+    const snapshot: any = this.snapshot as any;
+    return typeof snapshot.getFailoverMtime === 'function' ? snapshot.getFailoverMtime(key) : null;
+  }
+
   /**
    * 获取配置
    * @param {String} dataId - id of the data
@@ -394,7 +457,16 @@ export class ClientWorker extends Base implements IClientWorker {
     const key = this.getSnapshotKeyEncoded(dataId, group);
     const encrypted = this.cipher && this.cipher.isEncrypted(dataId);
 
-    try {
+    const failover = await this.getFailover(key);
+    if (failover !== null) {
+      return failover;
+    }
+
+    return await withSnapshotLock(this.snapshot, key, async () => {
+      // Re-check after waiting for an in-flight read/remove on the same key.
+      const lockedFailover = await this.getFailover(key);
+      if (lockedFailover !== null) return lockedFailover;
+      try {
       const response = await this.httpAgent.request(this.apiRoutePath.GET, {
         data: {
           dataId,
@@ -413,7 +485,7 @@ export class ClientWorker extends Base implements IClientWorker {
         encryptedContent = response;
         content = encrypted ? await this.cipher.decrypt(dataId, group, response || '', undefined, this.defaultEncoding) : response;
       }
-    } catch (err) {
+      } catch (err) {
       // Fallback to snapshot cache with backward compatibility
       const cache = await this.getSnapshotData(dataId, group);
       if (cache !== null) {
@@ -429,11 +501,13 @@ export class ClientWorker extends Base implements IClientWorker {
         this._error(err);
         return content;
       }
-      throw err;
-    }
+        throw err;
+      }
     
-    // Save to encoded path (even if content is null/empty)
-    await this.snapshot.save(key, encrypted ? (encryptedContent || '') : (content || ''));
+    // Empty/404 responses remove stale snapshots instead of preserving them.
+    const snapshotContent = encrypted ? (encryptedContent || '') : (content || '');
+    if (snapshotContent) await this.snapshot.save(key, snapshotContent);
+    else await this.snapshot.delete(key);
     if (encrypted) {
       const edkKey = this.getSnapshotEncryptedDataKey(dataId, group);
       if (encryptedDataKey) await this.snapshot.save(edkKey, encryptedDataKey);
@@ -442,6 +516,7 @@ export class ClientWorker extends Base implements IClientWorker {
     this.debug('got config from server (content=%s), saved to key: %s', 
                content === null ? 'null' : 'length=' + content.length, key);
     return content;
+    });
   }
 
   /**
@@ -531,7 +606,9 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {Boolean} success
    */
   async remove(dataId, group) {
-    await this.httpAgent.request(this.apiRoutePath.REMOVE, {
+    const key = this.getSnapshotKeyEncoded(dataId, group);
+    await withSnapshotLock(this.snapshot, key, async () => {
+      await this.httpAgent.request(this.apiRoutePath.REMOVE, {
       method: 'DELETE',
       data: {
         dataId,
@@ -539,9 +616,12 @@ export class ClientWorker extends Base implements IClientWorker {
         tenant: this.namespace,
       },
       dataAsQueryString: true,
+      });
+      await this.snapshot.delete(key);
+      await this.snapshot.delete(this.getSnapshotEncryptedDataKey(dataId, group));
+      await this.snapshot.delete(this.getSnapshotKeyLegacy(dataId, group));
+      await this.snapshot.delete(this.getSnapshotKeyLegacy(dataId, group) + '.encryptedDataKey');
     });
-    await this.snapshot.delete(this.getSnapshotKeyEncoded(dataId, group));
-    await this.snapshot.delete(this.getSnapshotEncryptedDataKey(dataId, group));
     return true;
   }
 

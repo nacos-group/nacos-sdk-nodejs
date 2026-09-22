@@ -30,6 +30,11 @@ interface ListenContext {
   md5: string;
 }
 
+export interface ConfigQueryResult {
+  content: string;
+  encryptedDataKey?: string;
+}
+
 /**
  * GrpcConfigProxy provides config operations (get/publish/remove/listen) over gRPC.
  * Emits 'configChanged' event when the server pushes a config change notification.
@@ -109,7 +114,7 @@ export class GrpcConfigProxy extends Base {
   /**
    * Get config value via gRPC ConfigQueryRequest.
    */
-  async getConfig(dataId: string, group: string, tenant?: string): Promise<string> {
+  async getConfigRaw(dataId: string, group: string, tenant?: string): Promise<ConfigQueryResult> {
     const resolvedTenant = tenant != null ? tenant : this._namespace;
     this._logger.info('[GrpcConfigProxy] getConfig dataId=%s group=%s tenant=%s', dataId, group, resolvedTenant);
     const request = {
@@ -118,19 +123,26 @@ export class GrpcConfigProxy extends Base {
       tenant: resolvedTenant,
     };
     const response = await this._transportClient.request(request, 'ConfigQueryRequest');
+    const content = response.content || '';
+    const encryptedDataKey = response.encryptedDataKey ||
+      (response.additionMap && response.additionMap.encryptedDataKey) || undefined;
+    const context = this._listenContexts.get(this._listenKey(dataId, group, resolvedTenant));
+    if (context) {
+      context.md5 = crypto.createHash('md5').update(content).digest('hex');
+    }
+    return { content, encryptedDataKey };
+  }
+
+  async getConfig(dataId: string, group: string, tenant?: string): Promise<string> {
+    const response = await this.getConfigRaw(dataId, group, tenant);
     const encrypted = this._cipher && this._cipher.isEncrypted(dataId);
-    if (!encrypted) return response.content || '';
+    if (!encrypted) return response.content;
     const plaintext = await this._cipher.decrypt(
       dataId,
       group,
-      response.content || '',
-      response.encryptedDataKey || (response.additionMap && response.additionMap.encryptedDataKey)
+      response.content,
+      response.encryptedDataKey
     );
-    const context = this._listenContexts.get(this._listenKey(dataId, group, resolvedTenant));
-    if (context) {
-      const encryptedConfig = this._cipher.getEncryptedConfig(dataId, group);
-      context.md5 = crypto.createHash('md5').update(encryptedConfig ? encryptedConfig.content : response.content || '').digest('hex');
-    }
     return plaintext;
   }
 

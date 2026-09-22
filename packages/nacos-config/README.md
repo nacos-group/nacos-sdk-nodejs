@@ -99,4 +99,12 @@ publish and decrypted on get/subscribe. A ClientKey/DKMS implementation can
 be supplied through `kmsClient` with `encrypt`, `decrypt`, and `generateDataKey`
 methods. The `cipher-` prefix uses direct KMS Encrypt/Decrypt.
 
+### Local failover and snapshots
+
+Snapshots are written atomically under `cacheDir/snapshot`. If the server is
+temporarily unavailable, the last ciphertext snapshot is used and decrypted in
+memory. A user-maintained failover file at the matching path under
+`cacheDir/failover` takes precedence over the server and snapshot; subscribed
+keys detect file creation, updates, and deletion while the client is running.
+
 * [@Harry Chen](https://github.com/czy88840616)

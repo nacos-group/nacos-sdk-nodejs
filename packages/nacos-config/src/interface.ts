@@ -256,10 +256,14 @@ export interface IServerListManager {
 
 export interface ISnapshot {
   cacheDir;
-  get(key: string): any;
-  save(key: string, value: any);
-  delete(key: string);
-  batchSave(arr: Array<SnapShotData>);
+  get(key: string): Promise<string | null>;
+  save(key: string, value: any): Promise<void>;
+  delete(key: string): Promise<void>;
+  batchSave(arr: Array<SnapShotData>): Promise<void>;
+  /** Read user-maintained disaster-recovery content, if present. */
+  getFailover(key: string): Promise<string | null>;
+  /** Return the failover file mtime for change detection, if present. */
+  getFailoverMtime(key: string): Promise<number | null>;
 }
 
 export interface NacosHttpError extends Error {

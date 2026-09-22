@@ -455,6 +455,11 @@ const client = new NacosConfigClient({
 `cipher-` without the AES suffix uses the adapter's direct KMS Encrypt/Decrypt
 operations. KMS credentials use the same Aliyun RAM options as request auth.
 
+Snapshots are written atomically under `cacheDir/snapshot`. A matching file
+under `cacheDir/failover` is treated as a user-maintained disaster-recovery
+override and wins over the server and snapshot for both HTTP and gRPC clients;
+subscriptions notice failover file creation, changes, and removal.
+
 ## Questions & Suggestions
 
 Please let us know how can we help. Do check out [issues](https://github.com/nacos-group/nacos-sdk-nodejs/issues) for bug reports or suggestions first.
