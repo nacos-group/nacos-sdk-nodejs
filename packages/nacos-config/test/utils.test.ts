@@ -209,4 +209,30 @@ describe('test/utils.test.ts', function() {
     assert(credentials.securityToken === 'providerToken');
     assert(credentials.signatureRegionId === 'cn-hangzhou');
   });
+
+  it('should resolve rotating credentials from a secret manager client', async function() {
+    let count = 0;
+    const configuration = createDefaultConfiguration({
+      alibabaCloudSecretName: 'nacos-secret',
+      secretManagerClient: {
+        getSecretInfo: async name => {
+          count++;
+          assert(name === 'nacos-secret');
+          return {
+            secretValue: JSON.stringify({
+              AccessKeyId: 'rotatingAccessKey',
+              AccessKeySecret: 'rotatingSecret',
+              SecurityToken: 'rotatingToken',
+              Expiration: '2999-01-01T00:00:00Z',
+            }),
+          };
+        },
+      },
+    });
+    const first = await resolveAliyunCredentialsAsync(configuration);
+    const second = await resolveAliyunCredentialsAsync(configuration);
+    assert(first.accessKeyId === 'rotatingAccessKey');
+    assert(second.securityToken === 'rotatingToken');
+    assert(count === 1);
+  });
 });

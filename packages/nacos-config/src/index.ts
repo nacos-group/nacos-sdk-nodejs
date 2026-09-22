@@ -25,6 +25,7 @@ export { ClientWorker } from './client_worker';
 export { ServerListManager } from './server_list_mgr';
 export { Snapshot } from './snapshot';
 export { HttpAgent } from './http_agent'
+export * from './cipher';
 
 const APIClientBase = require('cluster-client').APIClientBase;
 

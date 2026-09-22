@@ -14,6 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+import { KmsClient } from './cipher';
 // import { EventEmitter } from 'events';
 
 interface ListenFunc {
@@ -309,8 +311,38 @@ export interface ClientOptions {
   aliyunCredentialsProvider?: any;
   /** Custom Alibaba Cloud extended credential provider */
   alibabaCloudCredentialsProvider?: any;
+  /** KMS Secrets Manager secret name used for automatic credential rotation */
+  alibabaCloudSecretName?: string;
+  /** Optional Secrets Manager client/provider for automatic rotation */
+  secretManagerClient?: any;
   /** Alibaba Cloud v4 signature region ID */
   signatureRegionId?: string;
+  /** Optional KMS adapter for MSE encrypted configurations */
+  kmsClient?: KmsClient;
+  /** Factory for ClientKey/DKMS adapters; receives the KMS options below */
+  kmsClientFactory?: (options: any) => KmsClient;
+  /** KMS public gateway endpoint */
+  kmsEndpoint?: string;
+  /** KMS region ID */
+  kmsRegionId?: string;
+  /** KMS customer master key ID */
+  kmsKeyId?: string;
+  /** Enable the in-memory KMS/DataKey cache (default: true) */
+  kmsCacheEnabled?: boolean;
+  /** Maximum number of KMS cache entries (default: 1000) */
+  kmsCacheMaxSize?: number;
+  /** KMS cache expiry after last access, in seconds */
+  kmsCacheAfterAccessSeconds?: number;
+  /** KMS cache expiry after write, in seconds */
+  kmsCacheAfterWriteSeconds?: number;
+  /** KMS ClientKey/DKMS adapter configuration */
+  kmsClientKeyContent?: string;
+  kmsClientKeyFilePath?: string;
+  kmsPassword?: string;
+  kmsCaFileContent?: string;
+  kmsCaFilePath?: string;
+  /** Whether the KMS adapter should use OpenSSL certificate validation */
+  openSSL?: boolean;
   /** HTTP request client, defaults to urllib */
   httpclient?: any;
   /** HTTP agent */
@@ -371,7 +403,18 @@ export enum ClientOptionKeys {
   TIME_TO_REFRESH_IN_MILLISECOND = 'timeToRefreshInMillisecond',
   ALIYUN_CREDENTIALS_PROVIDER = 'aliyunCredentialsProvider',
   ALIBABA_CLOUD_CREDENTIALS_PROVIDER = 'alibabaCloudCredentialsProvider',
+  ALIBABA_CLOUD_SECRET_NAME = 'alibabaCloudSecretName',
+  SECRET_MANAGER_CLIENT = 'secretManagerClient',
   SIGNATURE_REGION_ID = 'signatureRegionId',
+  KMS_CLIENT = 'kmsClient',
+  KMS_ENDPOINT = 'kmsEndpoint',
+  KMS_REGION_ID = 'kmsRegionId',
+  KMS_KEY_ID = 'kmsKeyId',
+  KMS_CACHE_ENABLED = 'kmsCacheEnabled',
+  KMS_CACHE_MAX_SIZE = 'kmsCacheMaxSize',
+  KMS_CACHE_AFTER_ACCESS_SECONDS = 'kmsCacheAfterAccessSeconds',
+  KMS_CACHE_AFTER_WRITE_SECONDS = 'kmsCacheAfterWriteSeconds',
+  CIPHER = 'cipher',
   HTTPCLIENT = 'httpclient',
   APPNAME = 'appName',
   SSL = 'ssl',

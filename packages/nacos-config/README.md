@@ -90,4 +90,13 @@ NacosConfigClient 的 options 定义见 [ClientOptions](https://github.com/nacos
 
 ## Contacts
 
+### Aliyun MSE KMS encryption
+
+Install `@alicloud/kms20160120` to use the built-in public-gateway KMS client,
+then configure `kmsRegionId` and optionally `kmsKeyId`. Data IDs prefixed with
+`cipher-kms-aes-128-` or `cipher-kms-aes-256-` are encrypted transparently on
+publish and decrypted on get/subscribe. A ClientKey/DKMS implementation can
+be supplied through `kmsClient` with `encrypt`, `decrypt`, and `generateDataKey`
+methods. The `cipher-` prefix uses direct KMS Encrypt/Decrypt.
+
 * [@Harry Chen](https://github.com/czy88840616)

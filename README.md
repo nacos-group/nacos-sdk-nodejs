@@ -318,6 +318,22 @@ const clientOptions = {
 
 For RoleArn, OIDC/RRSA, KMS secret rotation, or other custom credential sources, provide `aliyunCredentialsProvider` or `alibabaCloudCredentialsProvider`. The provider is responsible for obtaining temporary credentials from Aliyun STS or another credential source. The SDK only consumes the returned three credential elements and then signs Nacos requests.
 
+For KMS Secrets Manager rotation, the same provider contract can be supplied
+through `secretManagerClient`; the client is called again after the returned
+credential expiration window:
+
+```js
+const configClient = new NacosConfigClient({
+  serverAddr: '127.0.0.1:8848',
+  alibabaCloudSecretName: 'nacos-client-credentials',
+  secretManagerClient: {
+    async getSecretInfo(name) {
+      return kmsSecretsManager.getSecretInfo(name);
+    },
+  },
+});
+```
+
 ```js
 const clientOptions = {
   serverAddr: '127.0.0.1:8848',
@@ -400,6 +416,44 @@ function createOidcRoleArnProvider(options) {
   };
 }
 ```
+
+## MSE KMS-encrypted configurations
+
+`nacos-config` supports the Aliyun MSE encrypted configuration formats used by
+the Java client. Install the optional KMS SDK when using the built-in public
+gateway client:
+
+```bash
+npm install @alicloud/kms20160120
+```
+
+Use `cipher-kms-aes-128-` or `cipher-kms-aes-256-` as the dataId prefix. The
+client generates a KMS DataKey, encrypts the value with AES/ECB/PKCS5Padding,
+and transparently carries `encryptedDataKey` over HTTP or gRPC:
+
+```js
+const client = new NacosConfigClient({
+  serverAddr: '127.0.0.1:8848',
+  kmsRegionId: 'cn-hangzhou',
+  kmsKeyId: 'alias/acs/mse',
+});
+
+await client.publishSingle('cipher-kms-aes-256-app', 'DEFAULT_GROUP', 'password=secret');
+const content = await client.getConfig('cipher-kms-aes-256-app', 'DEFAULT_GROUP');
+```
+
+For ClientKey/DKMS, inject an adapter implementing `encrypt`, `decrypt`, and
+`generateDataKey`:
+
+```js
+const client = new NacosConfigClient({
+  serverAddr: '127.0.0.1:8848',
+  kmsClient: myClientKeyAdapter,
+});
+```
+
+`cipher-` without the AES suffix uses the adapter's direct KMS Encrypt/Decrypt
+operations. KMS credentials use the same Aliyun RAM options as request auth.
 
 ## Questions & Suggestions
 

@@ -52,3 +52,8 @@ See [Conventional Commits](https://conventionalcommits.org) for commit guideline
 
 * add config code ([3d7ebfa](https://github.com/nacos-group/nacos-sdk-nodejs/commit/3d7ebfa))
 * export in one package ([fa747bc](https://github.com/nacos-group/nacos-sdk-nodejs/commit/fa747bc))
+## Unreleased
+
+- Add Aliyun MSE KMS encrypted configuration support for HTTP and gRPC transports.
+- Add injectable KMS adapters, AES DataKey encryption, bounded local cache, and encrypted snapshot recovery.
+- Add automatic Aliyun Secret Manager credential rotation hooks.

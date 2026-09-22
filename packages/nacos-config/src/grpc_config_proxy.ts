@@ -20,6 +20,8 @@ const Base = require('sdk-base');
 /* tslint:enable:no-var-requires */
 
 import { GrpcTransportClient } from 'nacos-common';
+import { ConfigCipher } from './cipher';
+import * as crypto from 'crypto';
 
 interface ListenContext {
   dataId: string;
@@ -38,13 +40,15 @@ export class GrpcConfigProxy extends Base {
   private _logger: any;
   /** key: `${dataId}@@${group}@@${tenant}` → ListenContext */
   private _listenContexts: Map<string, ListenContext>;
+  private _cipher: ConfigCipher;
 
-  constructor(options: { transportClient: GrpcTransportClient; namespace?: string; logger: any }) {
+  constructor(options: { transportClient: GrpcTransportClient; namespace?: string; logger: any; cipher?: ConfigCipher }) {
     super({ logger: options.logger });
     this._transportClient = options.transportClient;
     this._namespace = options.namespace || 'public';
     this._logger = options.logger;
     this._listenContexts = new Map();
+    this._cipher = options.cipher;
 
     // Register server push handler for config change notifications
     this._transportClient.registerServerPushHandler(
@@ -114,7 +118,20 @@ export class GrpcConfigProxy extends Base {
       tenant: resolvedTenant,
     };
     const response = await this._transportClient.request(request, 'ConfigQueryRequest');
-    return response.content || '';
+    const encrypted = this._cipher && this._cipher.isEncrypted(dataId);
+    if (!encrypted) return response.content || '';
+    const plaintext = await this._cipher.decrypt(
+      dataId,
+      group,
+      response.content || '',
+      response.encryptedDataKey || (response.additionMap && response.additionMap.encryptedDataKey)
+    );
+    const context = this._listenContexts.get(this._listenKey(dataId, group, resolvedTenant));
+    if (context) {
+      const encryptedConfig = this._cipher.getEncryptedConfig(dataId, group);
+      context.md5 = crypto.createHash('md5').update(encryptedConfig ? encryptedConfig.content : response.content || '').digest('hex');
+    }
+    return plaintext;
   }
 
   /**
@@ -129,6 +146,13 @@ export class GrpcConfigProxy extends Base {
       tenant: resolvedTenant,
       content,
     };
+    if (this._cipher && this._cipher.isEncrypted(dataId)) {
+      const encrypted = await this._cipher.encrypt(dataId, group, content);
+      request.content = encrypted.content;
+      if (encrypted.encryptedDataKey) {
+        request.additionMap = { encryptedDataKey: encrypted.encryptedDataKey };
+      }
+    }
     if (type) {
       request.type = type;
     }

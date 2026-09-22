@@ -114,11 +114,13 @@ export class HttpAgent {
     headers?: any;
     unit?: string;
     dataAsQueryString?: boolean;
+    /** Return response headers together with the decoded body. */
+    withHeaders?: boolean;
   } = {}) {
     // 默认为当前单元
     const unit = options.unit || this.unit;
     const ts = String(Date.now());
-    const { encode = false, method = 'GET', data, timeout = this.requestTimeout, headers = {}, dataAsQueryString = false } = options;
+    const { encode = false, method = 'GET', data, timeout = this.requestTimeout, headers = {}, dataAsQueryString = false, withHeaders = false } = options;
 
     const endTime = Date.now() + timeout;
     let lastErr;
@@ -165,9 +167,11 @@ export class HttpAgent {
         switch (res.status) {
           case HTTP_OK:
             if (this.decodeRes) {
-              return this.decodeRes(res, method, this.defaultEncoding)
+              const decoded = this.decodeRes(res, method, this.defaultEncoding);
+              return withHeaders ? { content: decoded, headers: res.headers || {} } : decoded;
             }
-            return this.decodeResData(res, method);
+            const content = this.decodeResData(res, method);
+            return withHeaders ? { content, headers: res.headers || {} } : content;
           case HTTP_NOT_FOUND:
             return null;
           case HTTP_CONFLICT:

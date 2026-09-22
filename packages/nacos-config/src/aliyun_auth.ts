@@ -175,7 +175,61 @@ function hasDynamicCredentials(configuration: IConfiguration): boolean {
     || configuration.get(ClientOptionKeys.RAM_ROLE_NAME)
     || getRawProperty(configuration, 'ram.role.name')
     || configuration.get(ClientOptionKeys.ALIBABA_CLOUD_CREDENTIALS_URI)
+    || configuration.get(ClientOptionKeys.ALIBABA_CLOUD_SECRET_NAME)
+    || getRawProperty(configuration, 'alibabaCloudSecretName')
+    || getRawProperty(configuration, 'secretName')
+    || process.env.ALIBABA_CLOUD_SECRET_NAME
     || (!hasLegacyCredentials && process.env.ALIBABA_CLOUD_CREDENTIALS_URI));
+}
+
+async function resolveSecretManagerCredentials(configuration: IConfiguration): Promise<AliyunCredentials> {
+  const secretName = firstNotEmpty([
+    configuration.get(ClientOptionKeys.ALIBABA_CLOUD_SECRET_NAME),
+    getRawProperty(configuration, 'secretName'),
+    process.env.ALIBABA_CLOUD_SECRET_NAME,
+  ]);
+  if (!secretName) return null;
+  const cacheKey = 'secret:' + secretName;
+  const cached = getCachedCredentials(configuration, cacheKey);
+  if (cached) return cached;
+  const client = firstNotEmpty([
+    configuration.get(ClientOptionKeys.SECRET_MANAGER_CLIENT),
+    getRawProperty(configuration, 'secretManagerClient'),
+  ]);
+  if (!client) {
+    const error: any = new Error('Alibaba Cloud Secret Manager client is required for alibabaCloudSecretName');
+    error.code = 'NACOS_SECRET_MANAGER_CLIENT_MISSING';
+    throw error;
+  }
+  let result: any;
+  if (typeof client === 'function') {
+    result = await client(secretName, configuration.get());
+  } else if (typeof client.getSecretInfo === 'function') {
+    result = await client.getSecretInfo(secretName);
+  } else if (typeof client.getSecretValue === 'function') {
+    result = await client.getSecretValue(secretName);
+  } else if (typeof client.getSecret === 'function') {
+    result = await client.getSecret(secretName);
+  } else {
+    throw new Error('secretManagerClient must expose getSecretInfo, getSecretValue, getSecret, or be a function');
+  }
+  const value = firstNotEmpty([
+    result && result.secretValue,
+    result && result.SecretValue,
+    result && result.secret,
+    result && result.Secret,
+    result,
+  ]);
+  const credentials = normalizeAliyunCredentials(value);
+  if (!credentials.expiration) {
+    const refreshInterval = Number(firstNotEmpty([
+      configuration.get(ClientOptionKeys.TIME_TO_REFRESH_IN_MILLISECOND),
+      getRawProperty(configuration, 'time.to.refresh.in.millisecond'),
+    ])) || 5 * 60 * 1000;
+    credentials.expiration = new Date(Date.now() + refreshInterval + getRefreshBeforeExpire(configuration)).toISOString();
+  }
+  setCachedCredentials(configuration, cacheKey, credentials);
+  return credentials;
 }
 
 async function resolveFromProvider(provider: any, configuration: IConfiguration): Promise<AliyunCredentials> {
@@ -226,6 +280,16 @@ async function resolveDynamicAliyunCredentials(configuration: IConfiguration): P
     return Object.assign({}, baseCredentials, providerCredentials, {
       signatureRegionId: firstNotEmpty([
         providerCredentials.signatureRegionId,
+        baseCredentials.signatureRegionId,
+      ]),
+    });
+  }
+
+  const secretCredentials = await resolveSecretManagerCredentials(configuration);
+  if (secretCredentials) {
+    return Object.assign({}, baseCredentials, secretCredentials, {
+      signatureRegionId: firstNotEmpty([
+        secretCredentials.signatureRegionId,
         baseCredentials.signatureRegionId,
       ]),
     });

@@ -101,6 +101,10 @@ export interface NacosNamingClientOptions {
   aliyunCredentialsProvider?: any;
   /** Custom Alibaba Cloud extended credential provider */
   alibabaCloudCredentialsProvider?: any;
+  /** KMS Secrets Manager secret name used for automatic credential rotation */
+  alibabaCloudSecretName?: string;
+  /** Optional Secrets Manager client/provider for automatic rotation */
+  secretManagerClient?: any;
   /** Alibaba Cloud v4 signature region ID */
   signatureRegionId?: string;
   /** Interval in ms to refresh server list from endpoint (default: 30000) */

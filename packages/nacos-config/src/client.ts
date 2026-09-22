@@ -33,6 +33,8 @@ import { HttpAgent } from './http_agent';
 import { Configuration } from './configuration';
 import { GrpcConfigProxy } from './grpc_config_proxy';
 import { GrpcConnection, GrpcTransportClient } from 'nacos-common';
+import { createConfigCipher, ConfigCipher } from './cipher';
+import { resolveAliyunCredentialsAsync } from './aliyun_auth';
 import * as assert from 'assert';
 
 const Base = require('sdk-base');
@@ -50,6 +52,7 @@ export class DataClient extends Base implements BaseClient {
   private _grpcTransportClient: GrpcTransportClient | null;
   private _grpcConfigProxy: GrpcConfigProxy | null;
   private _grpcSubscribers: Map<string, Function[]> | null;
+  private _cipher: ConfigCipher;
 
   constructor(options: ClientOptions) {
     if(!options.endpoint && !options.serverAddr) {
@@ -59,6 +62,27 @@ export class DataClient extends Base implements BaseClient {
     options = Object.assign({}, DEFAULT_OPTIONS, options);
     super(options);
     this.configuration = this.options.configuration = new Configuration(options);
+    this._cipher = createConfigCipher({
+      kmsClient: options.kmsClient,
+      kmsClientFactory: options.kmsClientFactory,
+      kmsEndpoint: options.kmsEndpoint,
+      kmsRegionId: options.kmsRegionId,
+      kmsKeyId: options.kmsKeyId,
+      kmsCacheEnabled: options.kmsCacheEnabled,
+      kmsCacheMaxSize: options.kmsCacheMaxSize,
+      kmsCacheAfterAccessSeconds: options.kmsCacheAfterAccessSeconds,
+      kmsCacheAfterWriteSeconds: options.kmsCacheAfterWriteSeconds,
+      credentials: options,
+      credentialsProvider: () => resolveAliyunCredentialsAsync(this.configuration),
+      kmsClientKeyContent: options.kmsClientKeyContent,
+      kmsClientKeyFilePath: options.kmsClientKeyFilePath,
+      kmsPassword: options.kmsPassword,
+      kmsCaFileContent: options.kmsCaFileContent,
+      kmsCaFilePath: options.kmsCaFilePath,
+      openSSL: options.openSSL,
+    });
+    this.configuration.merge({ cipher: this._cipher });
+    this._cipher.protectKey().catch(() => {});
     this._transport = (options.transport === 'http') ? 'http' : 'grpc';
     this._grpcConnection = null;
     this._grpcTransportClient = null;
@@ -107,6 +131,7 @@ export class DataClient extends Base implements BaseClient {
         transportClient: this._grpcTransportClient,
         namespace: options.namespace,
         logger,
+        cipher: this._cipher,
       });
 
       this._grpcConfigProxy.on('configChanged', ({ dataId, group, tenant }) => {
@@ -212,7 +237,9 @@ export class DataClient extends Base implements BaseClient {
       // Register gRPC listen (need MD5 of current content)
       this._grpcConfigProxy.getConfig(dataId, group).then(content => {
         const crypto = require('crypto');
-        const md5 = content ? crypto.createHash('md5').update(content).digest('hex') : '';
+        const encrypted = this._cipher.getEncryptedConfig(dataId, group);
+        const md5Content = encrypted ? encrypted.content : content;
+        const md5 = md5Content ? crypto.createHash('md5').update(md5Content).digest('hex') : '';
         this._grpcConfigProxy!.addListener(dataId, group, md5).catch(() => {});
       }).catch(() => {});
       return this;
@@ -441,6 +468,9 @@ export class DataClient extends Base implements BaseClient {
       client.close();
     }
     this.clients.clear();
+    if (this._cipher) {
+      this._cipher.close().catch(() => {});
+    }
   }
 
   protected getClient(options: { unit?: string; group?; dataId? } = {}): IClientWorker {

@@ -20,6 +20,7 @@ import { getMD5String } from './utils';
 import * as path from 'path';
 import * as is from 'is-type-of';
 import { HttpAgent } from './http_agent';
+import { ConfigCipher } from './cipher';
 
 const Base = require('sdk-base');
 const gather = require('co-gather');
@@ -80,6 +81,10 @@ export class ClientWorker extends Base implements IClientWorker {
 
   get defaultEncoding(): string {
     return this.configuration.get(ClientOptionKeys.DEFAULT_ENCODING) || 'utf8';
+  }
+
+  get cipher(): ConfigCipher {
+    return this.configuration.get(ClientOptionKeys.CIPHER);
   }
 
   close() {
@@ -153,7 +158,8 @@ export class ClientWorker extends Base implements IClientWorker {
       }
 
       const content = result.value;
-      const md5 = getMD5String(content, this.defaultEncoding);
+      const encrypted = this.cipher && this.cipher.getEncryptedConfig(item.dataId, item.group);
+      const md5 = getMD5String(encrypted ? encrypted.content : content, this.defaultEncoding);
       // 防止应用启动时，并发请求，导致同一个 key 重复触发
       if (item.md5 !== md5) {
         item.md5 = md5;
@@ -363,6 +369,17 @@ export class ClientWorker extends Base implements IClientWorker {
     return null;
   }
 
+  private getSnapshotEncryptedDataKey(dataId: string, group: string): string {
+    return this.getSnapshotKeyEncoded(dataId, group) + '.encryptedDataKey';
+  }
+
+  private async getSnapshotData(dataId: string, group: string): Promise<{ content: string; encryptedDataKey?: string } | null> {
+    const content = await this.getSnapshot(dataId, group);
+    if (content === null) return null;
+    const encryptedDataKey = await this.snapshot.get(this.getSnapshotEncryptedDataKey(dataId, group));
+    return { content, encryptedDataKey: encryptedDataKey || undefined };
+  }
+
   /**
    * 获取配置
    * @param {String} dataId - id of the data
@@ -372,28 +389,56 @@ export class ClientWorker extends Base implements IClientWorker {
   async getConfig(dataId, group) {
     this.debug('calling getConfig, dataId: %s, group: %s', dataId, group);
     let content;
+    let encryptedContent;
+    let encryptedDataKey;
     const key = this.getSnapshotKeyEncoded(dataId, group);
+    const encrypted = this.cipher && this.cipher.isEncrypted(dataId);
 
     try {
-      content = await this.httpAgent.request(this.apiRoutePath.GET, {
+      const response = await this.httpAgent.request(this.apiRoutePath.GET, {
         data: {
           dataId,
           group,
           tenant: this.namespace,
         },
+        withHeaders: encrypted,
       });
+      if (encrypted && response && typeof response === 'object' && response.content !== undefined) {
+        encryptedContent = response.content;
+        const headers = response.headers || {};
+        encryptedDataKey = headers['Encrypted-Data-Key'] || headers['encrypted-data-key'] ||
+          headers['encryptedDataKey'] || headers['encrypted-data-key'];
+        content = await this.cipher.decrypt(dataId, group, encryptedContent || '', encryptedDataKey, this.defaultEncoding);
+      } else {
+        encryptedContent = response;
+        content = encrypted ? await this.cipher.decrypt(dataId, group, response || '', undefined, this.defaultEncoding) : response;
+      }
     } catch (err) {
       // Fallback to snapshot cache with backward compatibility
-      const cache = await this.getSnapshot(dataId, group);
+      const cache = await this.getSnapshotData(dataId, group);
       if (cache !== null) {
+        if (encrypted) {
+          try {
+            content = await this.cipher.decrypt(dataId, group, cache.content, cache.encryptedDataKey, this.defaultEncoding);
+          } catch (_) {
+            throw err;
+          }
+        } else {
+          content = cache.content;
+        }
         this._error(err);
-        return cache;
+        return content;
       }
       throw err;
     }
     
     // Save to encoded path (even if content is null/empty)
-    await this.snapshot.save(key, content || '');
+    await this.snapshot.save(key, encrypted ? (encryptedContent || '') : (content || ''));
+    if (encrypted) {
+      const edkKey = this.getSnapshotEncryptedDataKey(dataId, group);
+      if (encryptedDataKey) await this.snapshot.save(edkKey, encryptedDataKey);
+      else await this.snapshot.delete(edkKey);
+    }
     this.debug('got config from server (content=%s), saved to key: %s', 
                content === null ? 'null' : 'length=' + content.length, key);
     return content;
@@ -418,14 +463,22 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {Boolean} success
    */
   async publishSingle(dataId, group, content, options?: UnitOptions) {
+    let publishContent = content;
+    let encryptedDataKey;
+    if (this.cipher && this.cipher.isEncrypted(dataId)) {
+      const encrypted = await this.cipher.encrypt(dataId, group, content, this.defaultEncoding);
+      publishContent = encrypted.content;
+      encryptedDataKey = encrypted.encryptedDataKey;
+    }
     const data: { [key: string]: string } = {
       dataId,
       group,
-      content,
+      content: publishContent,
       tenant: this.namespace,
       type: options && options.type,
       appName: this.appName
     };
+    if (encryptedDataKey) data.encryptedDataKey = encryptedDataKey;
     // 服务端从请求头读取 casMd5（ConfigController: request.getHeader("casMd5")），
     // 放在表单参数里会被忽略，导致退化为无条件发布
     const headers: { [key: string]: string } = {};
@@ -487,6 +540,8 @@ export class ClientWorker extends Base implements IClientWorker {
       },
       dataAsQueryString: true,
     });
+    await this.snapshot.delete(this.getSnapshotKeyEncoded(dataId, group));
+    await this.snapshot.delete(this.getSnapshotEncryptedDataKey(dataId, group));
     return true;
   }
 
