@@ -261,9 +261,9 @@ export interface ISnapshot {
   delete(key: string): Promise<void>;
   batchSave(arr: Array<SnapShotData>): Promise<void>;
   /** Read user-maintained disaster-recovery content, if present. */
-  getFailover?(key: string): Promise<string | null>;
+  getFailover(key: string): Promise<string | null>;
   /** Return the failover file mtime for change detection, if present. */
-  getFailoverMtime?(key: string): Promise<number | null>;
+  getFailoverMtime(key: string): Promise<number | null>;
 }
 
 export interface NacosHttpError extends Error {

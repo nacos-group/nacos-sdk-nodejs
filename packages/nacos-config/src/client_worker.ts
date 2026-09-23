@@ -21,7 +21,7 @@ import * as path from 'path';
 import * as is from 'is-type-of';
 import { HttpAgent } from './http_agent';
 import { ConfigCipher } from './cipher';
-import { withSnapshotLock } from './disaster_recovery';
+import { readConfigWithFailover, withSnapshotLock } from './disaster_recovery';
 
 const Base = require('sdk-base');
 const gather = require('co-gather');
@@ -161,13 +161,7 @@ export class ClientWorker extends Base implements IClientWorker {
       }
 
       const content = result.value;
-      const failoverKey = this.getSnapshotKeyEncoded(item.dataId, item.group);
-      const failoverMtime = await this.getFailoverMtime(failoverKey);
-      if (failoverMtime !== null) {
-        item.useFailover = true;
-        item.failoverVersion = failoverMtime;
-      }
-      const encrypted = item.useFailover ? null : this.cipher && this.cipher.getEncryptedConfig(item.dataId, item.group);
+      const encrypted = this.cipher && this.cipher.getEncryptedConfig(item.dataId, item.group);
       const md5 = getMD5String(encrypted ? encrypted.content : content, this.defaultEncoding);
       // 防止应用启动时，并发请求，导致同一个 key 重复触发
       if (item.md5 !== md5) {
@@ -218,11 +212,15 @@ export class ClientWorker extends Base implements IClientWorker {
       return;
     }
 
-    const beginTime = Date.now();
+    // 每轮先检查本地 failover 文件的创建/删除/变更（对齐 Java SDK checkLocalConfig）
     await this.checkLocalFailover();
+
+    const beginTime = Date.now();
     const tenant = this.namespace;
     const probeUpdate = [];
     for (const item of this.subscriptions.values()) {
+      // 处于 failover 模式的 key 使用本地容灾内容，跳过服务端探测
+      // （对齐 Java SDK executeConfigListen: if (cache.isUseLocalConfigInfo()) continue）
       if (item.useFailover) {
         continue;
       }
@@ -239,10 +237,10 @@ export class ClientWorker extends Base implements IClientWorker {
       }
     }
 
+    // 所有订阅项都处于本地 failover：本轮无服务端探针，跳过 HTTP listener API；
+    // 但仍需 bounded delay，避免 startLongPulling while 循环空转占用 CPU（对齐 Java 无探针时不空转）
     if (probeUpdate.length === 0) {
-      // All subscriptions are locally overridden; avoid a busy loop and do not
-      // register an empty server-side long poll.
-      await sleep(1000);
+      await this.waitBeforeNextLocalCheck();
       return;
     }
 
@@ -270,35 +268,53 @@ export class ClientWorker extends Base implements IClientWorker {
     }
   }
 
-  /** Keep user-maintained failover files hot without polling the server for them. */
+  /**
+   * failover 全量命中导致本轮无服务端探针时的兜底等待，
+   * 防止 startLongPulling while 循环空转占用 CPU。抽成独立方法便于测试替换。
+   * @private
+   */
+  private async waitBeforeNextLocalCheck(): Promise<void> {
+    await sleep(2000);
+  }
+
+  /**
+   * 检查所有订阅项的本地 failover 文件状态（对齐 Java SDK checkLocalConfig）：
+   * - 文件新建 → 切换到 failover 内容并通知监听器
+   * - 文件删除 → 切回服务端配置
+   * - 文件变更（mtime 变化）→ 重新加载并通知监听器
+   * @private
+   */
   private async checkLocalFailover() {
-    const restored: any[] = [];
-    for (const item of this.subscriptions.values()) {
-      const key = this.getSnapshotKeyEncoded(item.dataId, item.group);
-      const mtime = await this.getFailoverMtime(key);
+    for (const [key, item] of this.subscriptions.entries()) {
+      const failoverKey = this.getSnapshotKeyEncoded(item.dataId, item.group);
+      const mtime = await this.snapshot.getFailoverMtime(failoverKey);
+
       if (mtime === null) {
         if (item.useFailover) {
           item.useFailover = false;
           item.failoverVersion = null;
-          restored.push(item);
+          this.debug('[failover-change] failover file deleted, dataId: %s, group: %s', item.dataId, item.group);
         }
         continue;
       }
+
       if (!item.useFailover || item.failoverVersion !== mtime) {
-        const content = await this.getFailover(key);
-        if (content === null) continue;
+        const content = await this.snapshot.getFailover(failoverKey);
+        if (content === null) {
+          continue;
+        }
+        const isNew = !item.useFailover;
         item.useFailover = true;
         item.failoverVersion = mtime;
         const md5 = getMD5String(content, this.defaultEncoding);
         if (item.md5 !== md5) {
           item.md5 = md5;
           item.content = content;
-          setImmediate(() => this.emit(this.formatKey(item), content));
+          this.debug('[failover-change] failover file %s, dataId: %s, group: %s, md5: %s',
+            isNew ? 'created' : 'changed', item.dataId, item.group, md5);
+          setImmediate(() => this.emit(key, content));
         }
       }
-    }
-    if (restored.length > 0) {
-      await this.syncConfigs(restored);
     }
   }
 
@@ -433,16 +449,6 @@ export class ClientWorker extends Base implements IClientWorker {
     return { content, encryptedDataKey: encryptedDataKey || undefined };
   }
 
-  private async getFailover(key: string): Promise<string | null> {
-    const snapshot: any = this.snapshot as any;
-    return typeof snapshot.getFailover === 'function' ? snapshot.getFailover(key) : null;
-  }
-
-  private async getFailoverMtime(key: string): Promise<number | null> {
-    const snapshot: any = this.snapshot as any;
-    return typeof snapshot.getFailoverMtime === 'function' ? snapshot.getFailoverMtime(key) : null;
-  }
-
   /**
    * 获取配置
    * @param {String} dataId - id of the data
@@ -451,72 +457,68 @@ export class ClientWorker extends Base implements IClientWorker {
    */
   async getConfig(dataId, group) {
     this.debug('calling getConfig, dataId: %s, group: %s', dataId, group);
-    let content;
-    let encryptedContent;
-    let encryptedDataKey;
     const key = this.getSnapshotKeyEncoded(dataId, group);
     const encrypted = this.cipher && this.cipher.isEncrypted(dataId);
-
-    const failover = await this.getFailover(key);
-    if (failover !== null) {
-      return failover;
+    if (encrypted) {
+      return await withSnapshotLock(this.snapshot, key, async () => {
+        const getFailover = (this.snapshot as any).getFailover;
+        const failover = typeof getFailover === 'function' ? await getFailover.call(this.snapshot, key) : null;
+        if (failover !== null) return failover;
+        let encryptedContent: any;
+        let encryptedDataKey: string | undefined;
+        try {
+          const response = await this.httpAgent.request(this.apiRoutePath.GET, {
+            data: { dataId, group, tenant: this.namespace },
+            withHeaders: true,
+          });
+          if (response && typeof response === 'object' && response.content !== undefined) {
+            encryptedContent = response.content;
+            const headers = response.headers || {};
+            encryptedDataKey = headers['Encrypted-Data-Key'] || headers['encrypted-data-key'] ||
+              headers['encryptedDataKey'] || headers['encrypted-data-key'];
+          } else {
+            encryptedContent = response;
+          }
+          if (encryptedContent === null || encryptedContent === undefined || encryptedContent === '') {
+            await this.snapshot.delete(key);
+            await this.snapshot.delete(this.getSnapshotEncryptedDataKey(dataId, group));
+            return encryptedContent;
+          }
+          await this.snapshot.save(key, encryptedContent);
+          if (encryptedDataKey) await this.snapshot.save(this.getSnapshotEncryptedDataKey(dataId, group), encryptedDataKey);
+          else await this.snapshot.delete(this.getSnapshotEncryptedDataKey(dataId, group));
+          return await this.cipher.decrypt(dataId, group, encryptedContent, encryptedDataKey, this.defaultEncoding);
+        } catch (err) {
+          const cache = await this.getSnapshotData(dataId, group);
+          if (cache === null) throw err;
+          try {
+            return await this.cipher.decrypt(dataId, group, cache.content, cache.encryptedDataKey, this.defaultEncoding);
+          } catch (_) {
+            throw err;
+          }
+        }
+      });
     }
-
-    return await withSnapshotLock(this.snapshot, key, async () => {
-      // Re-check after waiting for an in-flight read/remove on the same key.
-      const lockedFailover = await this.getFailover(key);
-      if (lockedFailover !== null) return lockedFailover;
-      try {
-      const response = await this.httpAgent.request(this.apiRoutePath.GET, {
+    const result = await readConfigWithFailover({
+      snapshotKey: key,
+      snapshot: this.snapshot,
+      fetchFromServer: () => this.httpAgent.request(this.apiRoutePath.GET, {
         data: {
           dataId,
           group,
           tenant: this.namespace,
         },
-        withHeaders: encrypted,
-      });
-      if (encrypted && response && typeof response === 'object' && response.content !== undefined) {
-        encryptedContent = response.content;
-        const headers = response.headers || {};
-        encryptedDataKey = headers['Encrypted-Data-Key'] || headers['encrypted-data-key'] ||
-          headers['encryptedDataKey'] || headers['encrypted-data-key'];
-        content = await this.cipher.decrypt(dataId, group, encryptedContent || '', encryptedDataKey, this.defaultEncoding);
-      } else {
-        encryptedContent = response;
-        content = encrypted ? await this.cipher.decrypt(dataId, group, response || '', undefined, this.defaultEncoding) : response;
-      }
-      } catch (err) {
-      // Fallback to snapshot cache with backward compatibility
-      const cache = await this.getSnapshotData(dataId, group);
-      if (cache !== null) {
-        if (encrypted) {
-          try {
-            content = await this.cipher.decrypt(dataId, group, cache.content, cache.encryptedDataKey, this.defaultEncoding);
-          } catch (_) {
-            throw err;
-          }
-        } else {
-          content = cache.content;
-        }
-        this._error(err);
-        return content;
-      }
-        throw err;
-      }
-    
-    // Empty/404 responses remove stale snapshots instead of preserving them.
-    const snapshotContent = encrypted ? (encryptedContent || '') : (content || '');
-    if (snapshotContent) await this.snapshot.save(key, snapshotContent);
-    else await this.snapshot.delete(key);
-    if (encrypted) {
-      const edkKey = this.getSnapshotEncryptedDataKey(dataId, group);
-      if (encryptedDataKey) await this.snapshot.save(edkKey, encryptedDataKey);
-      else await this.snapshot.delete(edkKey);
-    }
-    this.debug('got config from server (content=%s), saved to key: %s', 
-               content === null ? 'null' : 'length=' + content.length, key);
-    return content;
+      }),
+      readSnapshotFallback: () => this.getSnapshot(dataId, group),
+      onServerError: err => this._error(err),
+      clearSnapshot: async () => {
+        // 同时清除 encoded 与 legacy 两种表示，避免 legacy 快照被 getSnapshot 迁回后复活已删除配置
+        await this.snapshot.delete(key);
+        await this.snapshot.delete(this.getSnapshotKeyLegacy(dataId, group));
+      },
     });
+    // ClientWorker.getConfig 对外仍只返回内容，容灾来源（server/snapshot）不对外暴露
+    return result.content;
   }
 
   /**
@@ -539,7 +541,7 @@ export class ClientWorker extends Base implements IClientWorker {
    */
   async publishSingle(dataId, group, content, options?: UnitOptions) {
     let publishContent = content;
-    let encryptedDataKey;
+    let encryptedDataKey: string | undefined;
     if (this.cipher && this.cipher.isEncrypted(dataId)) {
       const encrypted = await this.cipher.encrypt(dataId, group, content, this.defaultEncoding);
       publishContent = encrypted.content;
@@ -606,23 +608,25 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {Boolean} success
    */
   async remove(dataId, group) {
-    const key = this.getSnapshotKeyEncoded(dataId, group);
-    await withSnapshotLock(this.snapshot, key, async () => {
+    const encodedKey = this.getSnapshotKeyEncoded(dataId, group);
+    // 与 getConfig 共用快照锁：远端 remove + 本地清理串行，避免在途 get 晚到后复活快照
+    return await withSnapshotLock(this.snapshot, encodedKey, async () => {
       await this.httpAgent.request(this.apiRoutePath.REMOVE, {
-      method: 'DELETE',
-      data: {
-        dataId,
-        group,
-        tenant: this.namespace,
-      },
-      dataAsQueryString: true,
+        method: 'DELETE',
+        data: {
+          dataId,
+          group,
+          tenant: this.namespace,
+        },
+        dataAsQueryString: true,
       });
-      await this.snapshot.delete(key);
-      await this.snapshot.delete(this.getSnapshotEncryptedDataKey(dataId, group));
+      // 同步清理本地快照（encoded + legacy），避免服务端已删除的配置残留在缓存里复活
+      await this.snapshot.delete(this.getSnapshotKeyEncoded(dataId, group));
       await this.snapshot.delete(this.getSnapshotKeyLegacy(dataId, group));
+      await this.snapshot.delete(this.getSnapshotKeyEncoded(dataId, group) + '.encryptedDataKey');
       await this.snapshot.delete(this.getSnapshotKeyLegacy(dataId, group) + '.encryptedDataKey');
+      return true;
     });
-    return true;
   }
 
   /**

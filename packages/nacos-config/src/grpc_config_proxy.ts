@@ -21,18 +21,17 @@ const Base = require('sdk-base');
 
 import { GrpcTransportClient } from 'nacos-common';
 import { ConfigCipher } from './cipher';
-import * as crypto from 'crypto';
+
+export interface ConfigQueryResult {
+  content: string | null;
+  encryptedDataKey?: string;
+}
 
 interface ListenContext {
   dataId: string;
   group: string;
   tenant: string;
   md5: string;
-}
-
-export interface ConfigQueryResult {
-  content: string;
-  encryptedDataKey?: string;
 }
 
 /**
@@ -45,7 +44,7 @@ export class GrpcConfigProxy extends Base {
   private _logger: any;
   /** key: `${dataId}@@${group}@@${tenant}` → ListenContext */
   private _listenContexts: Map<string, ListenContext>;
-  private _cipher: ConfigCipher;
+  private _cipher: ConfigCipher | undefined;
 
   constructor(options: { transportClient: GrpcTransportClient; namespace?: string; logger: any; cipher?: ConfigCipher }) {
     super({ logger: options.logger });
@@ -123,27 +122,35 @@ export class GrpcConfigProxy extends Base {
       tenant: resolvedTenant,
     };
     const response = await this._transportClient.request(request, 'ConfigQueryRequest');
-    const content = response.content || '';
-    const encryptedDataKey = response.encryptedDataKey ||
-      (response.additionMap && response.additionMap.encryptedDataKey) || undefined;
-    const context = this._listenContexts.get(this._listenKey(dataId, group, resolvedTenant));
-    if (context) {
-      context.md5 = crypto.createHash('md5').update(content).digest('hex');
+    if (response && (response.resultCode === 200 ||
+      (response.resultCode === undefined && response.content !== undefined))) {
+      return {
+        content: response.content != null ? response.content : '',
+        encryptedDataKey: response.encryptedDataKey ||
+          (response.additionMap && response.additionMap.encryptedDataKey) || undefined,
+      };
     }
-    return { content, encryptedDataKey };
+    const errorCode = response ? response.errorCode : undefined;
+    if (errorCode === 300) {
+      return { content: null };
+    }
+    const resultCode = response ? response.resultCode : undefined;
+    const serverMessage = response && response.message ? response.message : 'unknown error';
+    const err: any = new Error(
+      `[GrpcConfigProxy] getConfig failed for dataId=${dataId}, group=${group}, tenant=${resolvedTenant}: ` +
+      `resultCode=${resultCode}, errorCode=${errorCode}, message=${serverMessage}`
+    );
+    err.resultCode = resultCode;
+    err.errorCode = errorCode;
+    err.serverMessage = serverMessage;
+    throw err;
   }
 
-  async getConfig(dataId: string, group: string, tenant?: string): Promise<string> {
-    const response = await this.getConfigRaw(dataId, group, tenant);
-    const encrypted = this._cipher && this._cipher.isEncrypted(dataId);
-    if (!encrypted) return response.content;
-    const plaintext = await this._cipher.decrypt(
-      dataId,
-      group,
-      response.content,
-      response.encryptedDataKey
-    );
-    return plaintext;
+  async getConfig(dataId: string, group: string, tenant?: string): Promise<string | null> {
+    const result = await this.getConfigRaw(dataId, group, tenant);
+    if (result.content === null) return null;
+    if (!this._cipher || !this._cipher.isEncrypted(dataId)) return result.content;
+    return this._cipher.decrypt(dataId, group, result.content, result.encryptedDataKey);
   }
 
   /**
