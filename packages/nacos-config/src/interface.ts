@@ -258,6 +258,16 @@ export interface ISnapshot {
   save(key: string, value: any);
   delete(key: string);
   batchSave(arr: Array<SnapShotData>);
+  /**
+   * 读取用户手工维护的容灾配置（failover），存在则优先于服务端与快照使用
+   * @return 内容，文件不存在返回 null
+   */
+  getFailover(key: string): Promise<string | null>;
+  /**
+   * 获取 failover 文件的最后修改时间（毫秒），用于探测文件变更
+   * @return mtime，文件不存在返回 null
+   */
+  getFailoverMtime(key: string): Promise<number | null>;
 }
 
 export interface NacosHttpError extends Error {

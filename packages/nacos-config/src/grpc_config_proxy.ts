@@ -105,7 +105,7 @@ export class GrpcConfigProxy extends Base {
   /**
    * Get config value via gRPC ConfigQueryRequest.
    */
-  async getConfig(dataId: string, group: string, tenant?: string): Promise<string> {
+  async getConfig(dataId: string, group: string, tenant?: string): Promise<string | null> {
     const resolvedTenant = tenant != null ? tenant : this._namespace;
     this._logger.info('[GrpcConfigProxy] getConfig dataId=%s group=%s tenant=%s', dataId, group, resolvedTenant);
     const request = {
@@ -114,7 +114,27 @@ export class GrpcConfigProxy extends Base {
       tenant: resolvedTenant,
     };
     const response = await this._transportClient.request(request, 'ConfigQueryRequest');
-    return response.content || '';
+    // 业务语义判定（对齐 Java ConfigQueryResponse）：
+    // - resultCode===200：成功，返回内容（允许空串）；
+    // - errorCode===300（CONFIG_NOT_FOUND）：服务端确认配置不存在，返回 null；
+    // - 其余（400 冲突 / 500 内部错误等）：抛出错误并保留 resultCode/errorCode/message 便于诊断。
+    if (response && response.resultCode === 200) {
+      return response.content != null ? response.content : '';
+    }
+    const errorCode = response ? response.errorCode : undefined;
+    if (errorCode === 300) {
+      return null;
+    }
+    const resultCode = response ? response.resultCode : undefined;
+    const serverMessage = response && response.message ? response.message : 'unknown error';
+    const err: any = new Error(
+      `[GrpcConfigProxy] getConfig failed for dataId=${dataId}, group=${group}, tenant=${resolvedTenant}: ` +
+      `resultCode=${resultCode}, errorCode=${errorCode}, message=${serverMessage}`
+    );
+    err.resultCode = resultCode;
+    err.errorCode = errorCode;
+    err.serverMessage = serverMessage;
+    throw err;
   }
 
   /**
