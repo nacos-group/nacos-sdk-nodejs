@@ -521,6 +521,10 @@ export class DataClient extends Base implements BaseClient {
       client.close();
     }
     this.clients.clear();
+    if (this.cipher) {
+      // gRPC mode owns the cipher on the DataClient itself; release its KMS client on shutdown.
+      this.cipher.close();
+    }
   }
 
   protected getClient(options: { unit?: string; group?; dataId? } = {}): IClientWorker {

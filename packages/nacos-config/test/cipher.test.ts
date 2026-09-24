@@ -41,6 +41,7 @@ class FakeKmsClient implements IKmsClient {
   encryptCalls: Array<{ plaintext: string; keyId?: string }> = [];
   describeKeyCalls: string[] = [];
   setDeletionProtectionCalls: string[] = [];
+  closeCalls = 0;
 
   async generateDataKey(keyId: string, keySpec: string): Promise<{ plaintext: string; ciphertextBlob: string }> {
     this.generateDataKeyCalls.push({ keyId, keySpec });
@@ -81,6 +82,10 @@ class FakeKmsClient implements IKmsClient {
 
   async setDeletionProtection(keyId: string): Promise<void> {
     this.setDeletionProtectionCalls.push(keyId);
+  }
+
+  close(): void {
+    this.closeCalls++;
   }
 }
 
@@ -407,6 +412,49 @@ describe('test/cipher.test.ts', () => {
       assert(calls === 3, 'should stop after three attempts');
       assert(capturedError && /persistent KMS outage/.test(capturedError.message));
     });
+
+    it('should stop retrying once the overall timeout deadline passes', async () => {
+      const kms = new AliyunKmsClient(createDefaultConfiguration({}));
+      // Shrink the deadline (default 3s) so the test need not wait on the real budget. Each
+      // attempt burns 60ms, which alone exceeds the 50ms deadline, so no second attempt may
+      // start even though KMS_MAX_ATTEMPTS has not been reached -- aligns with the Java
+      // KmsEncryptor.locallyRunWithRetryTimesAndTimeout deadline.
+      (kms as any).timeoutMs = 50;
+      let calls = 0;
+      (kms as any).models = { DecryptRequest: function (params: any) { return params; } };
+      (kms as any).client = {
+        decrypt: async () => {
+          calls++;
+          await new Promise(resolve => setTimeout(resolve, 60));
+          throw new Error('slow KMS outage');
+        },
+      };
+
+      let capturedError;
+      try {
+        await kms.decrypt('edk-slow');
+      } catch (err) {
+        capturedError = err;
+      }
+      assert(calls === 1, 'the deadline must cut retries short even though attempts remain');
+      assert(capturedError && /slow KMS outage/.test(capturedError.message));
+    });
+
+    it('should always surface a real Error even if the deadline precludes any attempt', async () => {
+      const kms = new AliyunKmsClient(createDefaultConfiguration({
+        kmsAccessKeyId: 'ak', kmsAccessKeySecret: 'sk', kmsRegionId: 'cn-hangzhou',
+      }));
+      // Degenerate budget: the deadline has already passed at loop entry, so no attempt runs.
+      // The retry helper must still throw a real Error, never `undefined`.
+      (kms as any).timeoutMs = 0;
+      let capturedError: any;
+      try {
+        await kms.decrypt('irrelevant-blob');
+      } catch (err) {
+        capturedError = err;
+      }
+      assert(capturedError instanceof Error, 'requestWithRetry must throw an Error, not undefined');
+    });
   });
 
   describe('AliyunKmsClient credential rotation', () => {
@@ -432,6 +480,25 @@ describe('test/cipher.test.ts', () => {
       version = 2; // a rotation happens between calls
       const afterRotation = await (kms as any).ensureClient();
       assert(afterRotation !== first, 'rotated credentials must rebuild the client so KMS sees the new secret');
+    });
+  });
+
+  describe('AliyunKmsClient per-request timeout', () => {
+
+    it('should configure a per-request timeout so a hung KMS gateway cannot stall the deadline', async () => {
+      const aliyunAuth = require('../src/aliyun_auth');
+      mm(aliyunAuth, 'resolveAliyunCredentialsAsync', async () => ({ accessKeyId: 'ak', accessKeySecret: 'sk' }));
+      const kmsSdk = require('@alicloud/kms20160120');
+      let capturedConfig: any;
+      // ensureClient prefers `kmsModule.default` as the constructor, so stubbing .default captures the config.
+      mm(kmsSdk, 'default', function (config: any) { capturedConfig = config; });
+      const kms = new AliyunKmsClient(createDefaultConfiguration({ kmsRegionId: 'cn-hangzhou' }));
+      await (kms as any).ensureClient();
+      assert(capturedConfig, 'the KMS client must be constructed with a config object');
+      assert(typeof capturedConfig.readTimeout === 'number' && capturedConfig.readTimeout > 0,
+        'readTimeout must bound a hung read so the retry deadline is actually enforceable');
+      assert(typeof capturedConfig.connectTimeout === 'number' && capturedConfig.connectTimeout > 0,
+        'connectTimeout must bound a hung connect');
     });
   });
 
@@ -543,6 +610,83 @@ describe('test/cipher.test.ts', () => {
       const cipher = newCipher({});
       await cipher.protectKey();
       assert(protectionCalls === 0, 'protectKey must not touch KMS when nothing KMS-related is configured');
+    });
+
+    it('should auto-trigger best-effort CMK protection when a cipher- config is encrypted', async () => {
+      const kms = new FakeKmsClient();
+      const cipher = newCipher({ kmsKeyId: 'alias/my-key' }, kms);
+      // Java's KmsEncryptor.encrypt() calls protectKeyId() automatically; encrypting a cipher-
+      // config must schedule the same best-effort deletion protection without being asked.
+      await cipher.encryptIfNeeded('cipher-myapp', 'token=abc');
+      await flush();
+      assert(kms.setDeletionProtectionCalls.length === 1,
+        'encrypting a cipher- config must auto-trigger CMK deletion protection (aligns with Java)');
+      assert(kms.setDeletionProtectionCalls[0] === 'alias/my-key');
+    });
+
+    it('should protect each keyId at most once across repeated publishes', async () => {
+      const kms = new FakeKmsClient();
+      const cipher = newCipher({ kmsKeyId: 'alias/my-key' }, kms);
+      await cipher.encryptIfNeeded('cipher-a', 'v1');
+      await cipher.encryptIfNeeded('cipher-b', 'v2');
+      await flush();
+      assert(kms.setDeletionProtectionCalls.length === 1, 'protection must be deduplicated per keyId');
+    });
+
+    it('should not rebuild the KMS client when protectKey() runs after close()', async () => {
+      // close() only flips `closed` and releases the built client; it neither nulls the reference
+      // nor blocks later calls. A protectKey() still in flight (or invoked directly) after close()
+      // would otherwise hit getKmsClient() and lazily rebuild a client nobody will ever close.
+      let factoryCalls = 0;
+      const cipher = newCipher({
+        kmsKeyId: 'alias/my-key',
+        kmsClientFactory: () => { factoryCalls++; return new FakeKmsClient(); },
+      });
+      cipher.close();
+      await cipher.protectKey();
+      assert(factoryCalls === 0, 'protectKey() after close() must not rebuild the KMS client');
+    });
+  });
+
+  describe('close() resource cleanup (KMS client cascade)', () => {
+
+    it('should close an injected KMS client that supports close() when the cipher is closed', () => {
+      const kms = new FakeKmsClient();
+      const cipher = newCipher({ kmsKeyId: 'alias/my-key' }, kms);
+      // Java's KmsEncryptor is Closeable and AliyunConfigFilter.close() cascades to it; the nodejs
+      // cipher must likewise release a custom KMS client (e.g. a DKMS adapter) when it is closed.
+      cipher.close();
+      assert(kms.closeCalls === 1, 'ConfigCipher.close() must cascade to kmsClient.close()');
+    });
+
+    it('should be idempotent: closing the cipher twice closes the KMS client once', () => {
+      const kms = new FakeKmsClient();
+      const cipher = newCipher({ kmsKeyId: 'alias/my-key' }, kms);
+      cipher.close();
+      cipher.close();
+      assert(kms.closeCalls === 1, 'close() must be idempotent (mirrors Java Closeable)');
+    });
+
+    it('should not throw when closing a cipher whose KMS client has no close()', () => {
+      // close() is optional on IKmsClient; a client without it must be handled gracefully.
+      const kms = new FailingDecryptKmsClient();
+      const cipher = newCipher({ kmsKeyId: 'alias/my-key' }, kms);
+      cipher.close();
+      assert(typeof (kms as any).close === 'undefined', 'sanity: this KMS client exposes no close()');
+    });
+
+    it('should cascade close() from ClientWorker to the cipher KMS client (HTTP mode)', () => {
+      const kms = new FakeKmsClient();
+      const worker = createCipherClient(kms);
+      worker.close();
+      assert(kms.closeCalls === 1, 'ClientWorker.close() must cascade to cipher.close()');
+    });
+
+    it('should cascade close() from DataClient to the cipher KMS client (gRPC mode)', () => {
+      const kms = new FakeKmsClient();
+      const client = createGrpcCipherClient(kms);
+      client.close();
+      assert(kms.closeCalls === 1, 'DataClient.close() must cascade to cipher.close()');
     });
   });
 

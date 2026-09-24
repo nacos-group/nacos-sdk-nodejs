@@ -37,6 +37,10 @@ const DEFAULT_KMS_KEY_ID = 'alias/acs/mse';
 // retry loop, matching the resilience of the Java / Go SDKs on the public gateway.
 const KMS_MAX_ATTEMPTS = 3;
 const KMS_RETRY_DELAY_MS = 200;
+// Overall deadline for one KMS operation across all retries, aligned with the Java KmsEncryptor
+// defaultTimeoutMilliseconds. Bounds the worst-case stall to this budget rather than
+// attempts * delay when the gateway hangs or keeps throttling.
+const KMS_TIMEOUT_MS = 3000;
 // Data-key cache defaults: bounded, and entries age out so a rotated data key is
 // eventually re-fetched instead of being pinned in memory forever.
 const DEFAULT_KMS_CACHE_MAX_SIZE = 1000;
@@ -73,6 +77,8 @@ export interface IKmsClient {
   describeKey?(keyId: string): Promise<any>;
   /** SetDeletionProtection: best-effort safety net that stops the CMK being deleted by accident (optional). */
   setDeletionProtection?(keyId: string, metadata?: any): Promise<void>;
+  /** Release underlying resources (optional). ConfigCipher.close() calls this so a custom client (e.g. a ClientKey/DKMS adapter) can shut down its connection pool or async workers. */
+  close?(): void | Promise<void>;
 }
 
 /**
@@ -192,6 +198,9 @@ export class AliyunKmsClient implements IKmsClient {
   // client was injected directly and is returned as-is; otherwise a change forces a rebuild so a
   // credential rotation reaches KMS instead of being pinned to the first-resolved secret forever.
   private clientCredentialsKey: string | null = null;
+  // Overall retry deadline (ms) for this client. Defaults to KMS_TIMEOUT_MS; held as a field so
+  // it can be tuned and so tests can shrink it instead of waiting on the real 3s budget.
+  private timeoutMs = KMS_TIMEOUT_MS;
 
   constructor(configuration: IConfiguration) {
     this.configuration = configuration;
@@ -229,6 +238,10 @@ export class AliyunKmsClient implements IKmsClient {
     const config: any = {
       accessKeyId: credentials.accessKeyId,
       accessKeySecret: credentials.accessKeySecret,
+      // Bound each KMS request individually so a hung gateway terminates instead of stalling the
+      // retry loop's overall deadline (mirrors the Java client's per-request RuntimeOptions timeout).
+      readTimeout: this.timeoutMs,
+      connectTimeout: this.timeoutMs,
     };
     if (credentials.securityToken) {
       config.securityToken = credentials.securityToken;
@@ -249,18 +262,25 @@ export class AliyunKmsClient implements IKmsClient {
   }
 
   private async requestWithRetry<T>(operation: () => Promise<T>): Promise<T> {
+    const begin = Date.now();
     let lastError: any;
-    for (let attempt = 0; attempt < KMS_MAX_ATTEMPTS; attempt++) {
+    let attempts = 0;
+    // Mirrors the Java KmsEncryptor.locallyRunWithRetryTimesAndTimeout loop: retry only while
+    // attempts remain AND the overall deadline has not passed, so a hung or persistently
+    // throttling gateway cannot stall a config operation for the full attempts * delay budget.
+    while (attempts < KMS_MAX_ATTEMPTS && Date.now() < begin + this.timeoutMs) {
+      attempts++;
       try {
         return await operation();
       } catch (err) {
         lastError = err;
-        if (attempt < KMS_MAX_ATTEMPTS - 1) {
+        if (attempts < KMS_MAX_ATTEMPTS) {
           await new Promise(resolve => setTimeout(resolve, KMS_RETRY_DELAY_MS));
         }
       }
     }
-    throw lastError;
+    // Guarantee a real Error even when the deadline precluded any attempt (never throw undefined).
+    throw lastError || new Error('[Nacos#Cipher] KMS request did not complete within the timeout budget');
   }
 
   async encrypt(plaintext: string, keyId?: string): Promise<string> {
@@ -331,6 +351,73 @@ export class AliyunKmsClient implements IKmsClient {
 }
 
 /**
+ * In-memory plaintext data-key cache keyed by the KMS-encrypted data key, with a size bound
+ * (FIFO eviction of the oldest entry) and per-item expiry (after-access / after-write). Mirrors
+ * the Java KmsLocalCache: it avoids a KMS round trip on every config read/notification and is
+ * never persisted, so a plaintext data key lives only in process memory.
+ */
+class DataKeyCache {
+
+  private readonly configuration: IConfiguration;
+  private readonly items = new Map<string, DataKeyCacheItem>();
+
+  constructor(configuration: IConfiguration) {
+    this.configuration = configuration;
+  }
+
+  get(encryptedDataKey: string): string {
+    if (!this.isEnabled()) {
+      return null;
+    }
+    const item = this.items.get(encryptedDataKey);
+    if (!item) {
+      return null;
+    }
+    if (this.isExpired(item)) {
+      this.items.delete(encryptedDataKey);
+      return null;
+    }
+    item.accessedAt = Date.now();
+    return item.value;
+  }
+
+  put(encryptedDataKey: string, plaintext: string): void {
+    if (!this.isEnabled()) {
+      return;
+    }
+    const now = Date.now();
+    this.items.set(encryptedDataKey, { value: plaintext, createdAt: now, accessedAt: now });
+    const maxSize = this.maxSize();
+    while (this.items.size > maxSize) {
+      const oldestKey = this.items.keys().next().value;
+      this.items.delete(oldestKey);
+    }
+  }
+
+  clear(): void {
+    this.items.clear();
+  }
+
+  private isEnabled(): boolean {
+    return this.configuration.get(ClientOptionKeys.KMS_CACHE_ENABLED) !== false;
+  }
+
+  private maxSize(): number {
+    const maxSize = Number(this.configuration.get(ClientOptionKeys.KMS_CACHE_MAX_SIZE));
+    return maxSize > 0 ? maxSize : DEFAULT_KMS_CACHE_MAX_SIZE;
+  }
+
+  private isExpired(item: DataKeyCacheItem): boolean {
+    const afterAccessSeconds = Number(this.configuration.get(ClientOptionKeys.KMS_CACHE_AFTER_ACCESS_SECONDS));
+    const afterWriteSeconds = Number(this.configuration.get(ClientOptionKeys.KMS_CACHE_AFTER_WRITE_SECONDS));
+    const afterAccess = afterAccessSeconds > 0 ? afterAccessSeconds * 1000 : DEFAULT_KMS_CACHE_AFTER_ACCESS_MS;
+    const afterWrite = afterWriteSeconds > 0 ? afterWriteSeconds * 1000 : DEFAULT_KMS_CACHE_AFTER_WRITE_MS;
+    const now = Date.now();
+    return (now - item.accessedAt) > afterAccess || (now - item.createdAt) > afterWrite;
+  }
+}
+
+/**
  * Applies KMS envelope encryption/decryption to config content, triggered by the `cipher-`
  * dataId prefix. Mirrors the Java / Go / Python wire format: GenerateDataKey → AES/ECB/PKCS5
  * with the Base64-decoded data key → Base64. The plaintext data key is cached in memory
@@ -341,11 +428,14 @@ export class ConfigCipher {
 
   private configuration: IConfiguration;
   private kmsClient: IKmsClient | null;
-  private dataKeyCache: Map<string, DataKeyCacheItem> = new Map();
+  private readonly dataKeyCache: DataKeyCache;
+  private readonly scheduledKeyProtections = new Set<string>();
+  private closed = false;
 
   constructor(configuration: IConfiguration, kmsClient?: IKmsClient) {
     this.configuration = configuration;
     this.kmsClient = kmsClient || null;
+    this.dataKeyCache = new DataKeyCache(configuration);
   }
 
   isCipherDataId(dataId: string): boolean {
@@ -363,6 +453,10 @@ export class ConfigCipher {
     if (content === null || content === undefined || content === '') {
       return { content };
     }
+    // Aligning with the Java KmsEncryptor.encrypt(), which calls protectKeyId() as part of
+    // publishing an encrypted config: schedule CMK deletion protection here (best-effort and
+    // off the publish path) instead of relying on callers to remember to protect the key.
+    this.scheduleKeyProtection();
     const keySpec = matchKeySpec(dataId);
     if (!keySpec) {
       // Bare `cipher-*` dataId (no envelope data key): let KMS encrypt the whole value directly,
@@ -374,7 +468,7 @@ export class ConfigCipher {
       return { content: encrypted };
     }
     const { plaintext, ciphertextBlob } = await this.getKmsClient().generateDataKey(this.getKeyId(), keySpec);
-    this.putCachedDataKey(ciphertextBlob, plaintext);
+    this.dataKeyCache.put(ciphertextBlob, plaintext);
     return {
       content: aesEcbEncryptToBase64(content, plaintext, this.getTextEncoding()),
       encryptedDataKey: ciphertextBlob,
@@ -416,11 +510,36 @@ export class ConfigCipher {
   }
 
   /**
+   * Schedule {@link protectKey} off the publish path, mirroring the Java KmsEncryptor which
+   * protects the CMK automatically on every encrypt. Deduplicated per keyId so repeated
+   * publishes of the same key trigger at most one protection attempt, and fire-and-forget so
+   * it never blocks or fails the config publish. protectKey() already swallows protection
+   * errors; the trailing catch only keeps the detached promise from an unhandled rejection and
+   * clears the marker so a later publish can retry if scheduling itself throws.
+   */
+  private scheduleKeyProtection(): void {
+    const keyId = this.getKeyId();
+    if (this.scheduledKeyProtections.has(keyId)) {
+      return;
+    }
+    this.scheduledKeyProtections.add(keyId);
+    Promise.resolve()
+      .then(() => this.protectKey())
+      .catch(() => this.scheduledKeyProtections.delete(keyId));
+  }
+
+  /**
    * Best-effort: enable deletion protection on the CMK backing encrypted configs so it cannot be
    * removed by accident. Opt-in and never throws - a protection failure must not block config
    * operations. No-op when the KMS client does not support deletion protection.
    */
   async protectKey(): Promise<void> {
+    // A closed cipher must never resurrect a KMS client. protectKey can still be in flight
+    // (scheduled fire-and-forget by a publish) or invoked directly after close(); without this
+    // guard getKmsClient() would lazily rebuild a client that nobody will ever close again.
+    if (this.closed) {
+      return;
+    }
     // Only protect a key the user actually wired KMS for. Without any KMS configuration
     // (kmsKeyId / kmsClient / kmsClientFactory), getKmsClient() would lazily build the
     // public-gateway client and touch the MSE default key -- a surprising side effect for
@@ -442,13 +561,40 @@ export class ConfigCipher {
     }
   }
 
+  /**
+   * Release resources held by the cipher, cascading to the KMS client's optional close() so a
+   * custom client (e.g. a ClientKey/DKMS adapter) can shut down its connection pool or async
+   * workers. Mirrors the Java KmsEncryptor being Closeable and AliyunConfigFilter.close()
+   * cascading to it. Idempotent and never throws: cleanup must not break client shutdown. A
+   * close() that returns a promise has its rejection swallowed so teardown cannot surface an
+   * unhandled rejection. Uses the already-built client (never getKmsClient()) so closing a
+   * cipher that never touched KMS does not lazily build a client just to close it.
+   */
+  close(): void {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
+    this.dataKeyCache.clear();
+    this.scheduledKeyProtections.clear();
+    const kmsClient = this.kmsClient;
+    if (kmsClient && kmsClient.close) {
+      const result = kmsClient.close();
+      if (result && typeof (result as Promise<void>).catch === 'function') {
+        (result as Promise<void>).catch(() => {
+          // Best-effort cleanup: a KMS client close failure must never break shutdown.
+        });
+      }
+    }
+  }
+
   private async resolvePlainDataKey(encryptedDataKey: string): Promise<string> {
-    const cached = this.getCachedDataKey(encryptedDataKey);
+    const cached = this.dataKeyCache.get(encryptedDataKey);
     if (cached) {
       return cached;
     }
     const plaintext = await this.getKmsClient().decrypt(encryptedDataKey);
-    this.putCachedDataKey(encryptedDataKey, plaintext);
+    this.dataKeyCache.put(encryptedDataKey, plaintext);
     return plaintext;
   }
 
@@ -484,52 +630,6 @@ export class ConfigCipher {
     return this.configuration.get(ClientOptionKeys.DEFAULT_ENCODING) || 'utf8';
   }
 
-  private isCacheEnabled(): boolean {
-    return this.configuration.get(ClientOptionKeys.KMS_CACHE_ENABLED) !== false;
-  }
-
-  private cacheMaxSize(): number {
-    const maxSize = Number(this.configuration.get(ClientOptionKeys.KMS_CACHE_MAX_SIZE));
-    return maxSize > 0 ? maxSize : DEFAULT_KMS_CACHE_MAX_SIZE;
-  }
-
-  private isCacheItemExpired(item: DataKeyCacheItem): boolean {
-    const afterAccessSeconds = Number(this.configuration.get(ClientOptionKeys.KMS_CACHE_AFTER_ACCESS_SECONDS));
-    const afterWriteSeconds = Number(this.configuration.get(ClientOptionKeys.KMS_CACHE_AFTER_WRITE_SECONDS));
-    const afterAccess = afterAccessSeconds > 0 ? afterAccessSeconds * 1000 : DEFAULT_KMS_CACHE_AFTER_ACCESS_MS;
-    const afterWrite = afterWriteSeconds > 0 ? afterWriteSeconds * 1000 : DEFAULT_KMS_CACHE_AFTER_WRITE_MS;
-    const now = Date.now();
-    return (now - item.accessedAt) > afterAccess || (now - item.createdAt) > afterWrite;
-  }
-
-  private getCachedDataKey(encryptedDataKey: string): string {
-    if (!this.isCacheEnabled()) {
-      return null;
-    }
-    const item = this.dataKeyCache.get(encryptedDataKey);
-    if (!item) {
-      return null;
-    }
-    if (this.isCacheItemExpired(item)) {
-      this.dataKeyCache.delete(encryptedDataKey);
-      return null;
-    }
-    item.accessedAt = Date.now();
-    return item.value;
-  }
-
-  private putCachedDataKey(encryptedDataKey: string, plaintext: string): void {
-    if (!this.isCacheEnabled()) {
-      return;
-    }
-    const now = Date.now();
-    this.dataKeyCache.set(encryptedDataKey, { value: plaintext, createdAt: now, accessedAt: now });
-    const maxSize = this.cacheMaxSize();
-    while (this.dataKeyCache.size > maxSize) {
-      const oldestKey = this.dataKeyCache.keys().next().value;
-      this.dataKeyCache.delete(oldestKey);
-    }
-  }
 }
 
 export function createConfigCipher(configuration: IConfiguration): ConfigCipher {

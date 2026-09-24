@@ -99,6 +99,10 @@ export class ClientWorker extends Base implements IClientWorker {
     this.isClose = true;
     this.removeAllListeners();
     this.subscriptions.clear();
+    if (this.cipher) {
+      // Cascade so an injected KMS client is released (HTTP mode owns the cipher here).
+      this.cipher.close();
+    }
     this.debug('client worker closed');
   }
 
