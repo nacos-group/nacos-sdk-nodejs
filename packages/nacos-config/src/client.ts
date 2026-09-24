@@ -307,12 +307,12 @@ export class DataClient extends Base implements BaseClient {
     checkParameters(dataId, group);
     if (this._grpcConfigProxy) {
       // 带本地容灾读取：failover > 服务端 > 快照（对齐 Java SDK 读优先级）
-      const { content, encryptedDataKey } = await this._getConfigWithCache(dataId, group, this.configuration.get(ClientOptionKeys.NAMESPACE));
+      const { content, encryptedDataKey, source } = await this._getConfigWithCache(dataId, group, this.configuration.get(ClientOptionKeys.NAMESPACE));
       if (content === null) {
         return '';
       }
-      // 用户边界：cipher dataId 解密后返回明文
-      return await this.cipher.decryptIfNeeded(dataId, content, encryptedDataKey);
+      // 用户边界：cipher dataId 解密后返回明文；failover 明文直接透传不解密
+      return await this.cipher.decryptIfNeeded(dataId, content, encryptedDataKey, source === 'failover');
     }
     const client = this.getClient(options);
     return await client.getConfig(dataId, group);
@@ -663,10 +663,12 @@ export class DataClient extends Base implements BaseClient {
       }
       let rawContent = '';
       let encryptedDataKey: string | undefined;
+      let isFailover = false;
       try {
         const result = await this._getConfigWithCache(evt.dataId, evt.group);
         rawContent = result.content === null ? '' : result.content;
         encryptedDataKey = result.encryptedDataKey;
+        isFailover = result.source === 'failover';
       } catch (err) {
         this.throwError(err);
         return;
@@ -678,7 +680,7 @@ export class DataClient extends Base implements BaseClient {
       // 用户边界：密文解密后再回调监听器（解密可能触发 KMS，异步）
       let plainContent = '';
       try {
-        plainContent = await this.cipher.decryptIfNeeded(evt.dataId, rawContent, encryptedDataKey);
+        plainContent = await this.cipher.decryptIfNeeded(evt.dataId, rawContent, encryptedDataKey, isFailover);
       } catch (err) {
         // 解密失败（KMS 不可用 / content 与 edk 错配）：经 throwError 上报为 'error' 事件，
         // 避免被外层 op queue 的 .catch(() => {}) 静默吞掉；不回调监听器以免下发不可信内容
@@ -708,10 +710,12 @@ export class DataClient extends Base implements BaseClient {
     }
     let rawContent = '';
     let encryptedDataKey: string | undefined;
+    let isFailover = false;
     try {
       const result = await this._getConfigWithCache(state.dataId, state.group);
       rawContent = result.content === null ? '' : result.content;
       encryptedDataKey = result.encryptedDataKey;
+      isFailover = result.source === 'failover';
     } catch (err) {
       this.throwError(err);
       return;
@@ -722,7 +726,7 @@ export class DataClient extends Base implements BaseClient {
     // 用户边界：初始内容解密后再回调监听器（解密可能触发 KMS，异步）
     let plainContent = '';
     try {
-      plainContent = await this.cipher.decryptIfNeeded(state.dataId, rawContent, encryptedDataKey);
+      plainContent = await this.cipher.decryptIfNeeded(state.dataId, rawContent, encryptedDataKey, isFailover);
     } catch (err) {
       // 解密失败（KMS 不可用 / content 与 edk 错配）：经 throwError 上报为可观测错误，
       // 不用不可信内容回调监听器；仍继续注册远端监听，待服务端 / KMS 恢复后经推送重试

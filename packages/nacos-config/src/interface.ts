@@ -361,14 +361,42 @@ export interface ClientOptions {
   decodeRes?: (res: any, method?: string, encoding?: string) => any;
   /** Transport protocol: 'grpc' uses gRPC, 'http' uses HTTP long-polling (default: 'http') */
   transport?: 'grpc' | 'http';
-  /** Custom KMS client implementing generateDataKey/decrypt; overrides the built-in Alibaba Cloud client */
+  /** Custom KMS client implementing encrypt/generateDataKey/decrypt; overrides the built-in Alibaba Cloud client */
   kmsClient?: any;
+  /**
+   * Factory that builds a custom KMS client, e.g. a ClientKey/DKMS adapter. It receives the client
+   * configuration so it can read the DKMS passthrough options below. Consulted only when no kmsClient
+   * is given, and before falling back to the built-in Alibaba Cloud gateway client.
+   */
+  kmsClientFactory?: (configuration: IConfiguration) => any;
+  /** DKMS ClientKey JSON content (dedicated KMS instance); consumed by a custom kmsClientFactory */
+  kmsClientKeyContent?: string;
+  /** DKMS ClientKey file path; consumed by a custom kmsClientFactory */
+  kmsClientKeyFilePath?: string;
+  /** DKMS ClientKey password; consumed by a custom kmsClientFactory */
+  kmsPassword?: string;
+  /** DKMS CA certificate (PEM) content; consumed by a custom kmsClientFactory */
+  kmsCaFileContent?: string;
+  /** DKMS CA certificate file path; consumed by a custom kmsClientFactory */
+  kmsCaFilePath?: string;
   /** KMS OpenAPI endpoint, e.g. 'kms.cn-hangzhou.aliyuncs.com'; auto-resolved from kmsRegionId when omitted */
   kmsEndpoint?: string;
   /** KMS region id used to resolve the endpoint when kmsEndpoint is omitted */
   kmsRegionId?: string;
   /** KMS customer master key id used to generate data keys (default: 'alias/acs/mse') */
   kmsKeyId?: string;
+  /** Enable the in-memory KMS data-key cache (default: true) */
+  kmsCacheEnabled?: boolean;
+  /** Maximum number of cached KMS data keys before the oldest is evicted (default: 1000) */
+  kmsCacheMaxSize?: number;
+  /** Evict a cached data key this many seconds after it was last accessed (default: 3600) */
+  kmsCacheAfterAccessSeconds?: number;
+  /** Evict a cached data key this many seconds after it was written (default: 86400) */
+  kmsCacheAfterWriteSeconds?: number;
+  /** Alibaba Cloud Secret Manager secret name used for automatic credential rotation */
+  alibabaCloudSecretName?: string;
+  /** Alibaba Cloud Secret Manager client (or a function returning the secret) used with alibabaCloudSecretName */
+  secretManagerClient?: any;
 }
 
 export enum ClientOptionKeys {
@@ -389,6 +417,8 @@ export enum ClientOptionKeys {
   TIME_TO_REFRESH_IN_MILLISECOND = 'timeToRefreshInMillisecond',
   ALIYUN_CREDENTIALS_PROVIDER = 'aliyunCredentialsProvider',
   ALIBABA_CLOUD_CREDENTIALS_PROVIDER = 'alibabaCloudCredentialsProvider',
+  ALIBABA_CLOUD_SECRET_NAME = 'alibabaCloudSecretName',
+  SECRET_MANAGER_CLIENT = 'secretManagerClient',
   SIGNATURE_REGION_ID = 'signatureRegionId',
   HTTPCLIENT = 'httpclient',
   APPNAME = 'appName',
@@ -412,7 +442,17 @@ export enum ClientOptionKeys {
   KMS_CLIENT = 'kmsClient',
   KMS_ENDPOINT = 'kmsEndpoint',
   KMS_REGION_ID = 'kmsRegionId',
-  KMS_KEY_ID = 'kmsKeyId'
+  KMS_KEY_ID = 'kmsKeyId',
+  KMS_CACHE_ENABLED = 'kmsCacheEnabled',
+  KMS_CACHE_MAX_SIZE = 'kmsCacheMaxSize',
+  KMS_CACHE_AFTER_ACCESS_SECONDS = 'kmsCacheAfterAccessSeconds',
+  KMS_CACHE_AFTER_WRITE_SECONDS = 'kmsCacheAfterWriteSeconds',
+  KMS_CLIENT_FACTORY = 'kmsClientFactory',
+  KMS_CLIENT_KEY_CONTENT = 'kmsClientKeyContent',
+  KMS_CLIENT_KEY_FILE_PATH = 'kmsClientKeyFilePath',
+  KMS_PASSWORD = 'kmsPassword',
+  KMS_CA_FILE_CONTENT = 'kmsCaFileContent',
+  KMS_CA_FILE_PATH = 'kmsCaFilePath'
 }
 
 export interface IConfiguration {
