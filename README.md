@@ -331,6 +331,22 @@ const clientOptions = {
 };
 ```
 
+Alternatively, credentials can be pulled from an Aliyun KMS Secrets Manager secret: set `alibabaCloudSecretName` and supply a `secretManagerClient` — either a function `(secretName, options) => secret` or an object with a `getSecretValue(secretName)` method. The secret value is parsed as credentials and cached; when it carries no expiration, it is refreshed every `time.to.refresh.in.millisecond` (default 5 minutes).
+
+```js
+const clientOptions = {
+  serverAddr: '127.0.0.1:8848',
+  alibabaCloudSecretName: 'nacos-client-credentials',
+  secretManagerClient: {
+    async getSecretValue(name) {
+      // e.g. backed by @alicloud/kms20160120 GetSecretValue, or the
+      // Aliyun Secrets Manager cache client
+      return { secretValue: '{"AccessKeyId":"...","AccessKeySecret":"..."}' };
+    },
+  },
+};
+```
+
 RoleArn AssumeRole example:
 
 ```js
@@ -400,6 +416,77 @@ function createOidcRoleArnProvider(options) {
   };
 }
 ```
+
+## Encrypted Configuration (Aliyun KMS)
+
+`nacos-config` transparently encrypts and decrypts configurations whose dataId starts with the `cipher-` prefix, matching the wire format used by the Java / Go / Python SDKs (envelope encryption: the client obtains a data key from KMS, AES-encrypts the content with it, and ships the KMS-encrypted data key — `encryptedDataKey` — alongside the ciphertext over both HTTP and gRPC).
+
+Supported dataId forms:
+
+| dataId form | Encryption |
+|---|---|
+| `cipher-kms-aes-128-<dataId>` | Envelope encryption, KMS data key with `AES_128` spec |
+| `cipher-kms-aes-256-<dataId>` | Envelope encryption, KMS data key with `AES_256` spec |
+| `cipher-<dataId>` (no algorithm segment) | Direct KMS `Encrypt`/`Decrypt` of the whole value under the CMK |
+
+> Only the KMS algorithms above are supported. A dataId whose second segment names another algorithm (e.g. `cipher-aes-...` backed by a Java encryption plugin) has no Node.js implementation and would be treated as the direct-KMS form — do not share such dataIds across SDKs.
+
+The built-in client talks to the KMS public gateway through `@alicloud/kms20160120`, which is declared as an **optional dependency** and lazily required — installations without it (or users without `cipher-` dataIds) are unaffected. KMS credentials reuse the same Aliyun RAM options as request authentication (see [Aliyun RAM Authentication](#aliyun-ram-authentication)).
+
+```js
+const client = new NacosConfigClient({
+  serverAddr: '127.0.0.1:8848',
+  kmsRegionId: 'cn-hangzhou',   // resolves the KMS endpoint; or set kmsEndpoint directly
+  // kmsKeyId: 'alias/acs/mse', // default CMK, aligned with the Java MSE client
+});
+
+// published encrypted, read back decrypted — no API differences
+await client.publishSingle('cipher-kms-aes-256-app-secret', 'DEFAULT_GROUP', 'password=secret');
+const plain = await client.getConfig('cipher-kms-aes-256-app-secret', 'DEFAULT_GROUP'); // 'password=secret'
+client.subscribe({ dataId: 'cipher-kms-aes-256-app-secret', group: 'DEFAULT_GROUP' }, content => {
+  // listeners always receive decrypted content
+});
+```
+
+KMS-related client options:
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| kmsRegionId | String | | Region used to resolve the KMS endpoint |
+| kmsEndpoint | String | | KMS OpenAPI endpoint, e.g. `'kms.cn-hangzhou.aliyuncs.com'`; auto-resolved from `kmsRegionId` |
+| kmsKeyId | String | `'alias/acs/mse'` | CMK used to generate data keys |
+| kmsClient | Object | | Custom `IKmsClient` (`encrypt` / `generateDataKey` / `decrypt`, optional `describeKey` / `setDeletionProtection` / `close`); overrides the built-in gateway client |
+| kmsClientFactory | Function | | `(configuration) => IKmsClient`, e.g. a ClientKey/DKMS adapter reading the `kmsClientKeyContent` / `kmsClientKeyFilePath` / `kmsPassword` / `kmsCaFileContent` / `kmsCaFilePath` passthrough options |
+| kmsCacheEnabled | Boolean | `true` | In-memory data-key cache |
+| kmsCacheMaxSize | Number | `1000` | Max cached data keys (FIFO eviction) |
+| kmsCacheAfterAccessSeconds | Number | `3600` | Evict a data key this long after last access |
+| kmsCacheAfterWriteSeconds | Number | `86400` | Evict a data key this long after it was cached |
+
+Behavior notes (aligned with the Java MSE client):
+
+- Caches, snapshots, md5 and long-poll/probe comparisons all operate on **ciphertext**; decryption happens only at user boundaries (`getConfig`, listeners, change notifications).
+- Snapshots persist the ciphertext plus a parallel `edk/` entry holding the `encryptedDataKey`, so disaster recovery keeps working; both are removed together on `remove` / not-found.
+- Failover files (`cacheDir/failover/...`) are user-maintained **plaintext** by contract and are never sent to KMS — they can be used as an emergency override for a `cipher-` dataId.
+- Publishing a `cipher-` config schedules best-effort CMK **deletion protection** (deduplicated per key, never blocks or fails the publish).
+- KMS calls carry per-request timeouts within an overall retry budget (3 attempts / ~3s by default), so a hung or throttling gateway cannot stall config operations.
+- A decrypt failure at read time surfaces via the client `error` event instead of handing untrusted content to listeners.
+- `close()` cascades to the cipher and releases an injected `kmsClient` (idempotent).
+
+For a dedicated KMS instance (ClientKey/DKMS), inject an adapter — the SDK intentionally does not hard-depend on the DKMS SDK:
+
+```js
+const client = new NacosConfigClient({
+  serverAddr: '127.0.0.1:8848',
+  kmsClientFactory: configuration => createDkmsAdapter({
+    clientKeyContent: configuration.get('kmsClientKeyContent'),
+    password: configuration.get('kmsPassword'),
+    caFileContent: configuration.get('kmsCaFileContent'),
+    endpoint: configuration.get('kmsEndpoint'),
+  }),
+});
+```
+
+A runnable sample lives in [`example/kms-config.js`](./example/kms-config.js).
 
 ## Questions & Suggestions
 

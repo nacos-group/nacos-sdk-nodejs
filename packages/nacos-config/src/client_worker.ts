@@ -20,11 +20,20 @@ import { getMD5String } from './utils';
 import * as path from 'path';
 import * as is from 'is-type-of';
 import { HttpAgent } from './http_agent';
-import { readConfigWithFailover, withSnapshotLock } from './disaster_recovery';
+import { ConfigCipher, createConfigCipher, ENCRYPTED_DATA_KEY_HEADER, ENCRYPTED_DATA_KEY_PARAM } from './cipher';
+import { readConfigWithFailover, withSnapshotLock, ConfigContentSource } from './disaster_recovery';
 
 const Base = require('sdk-base');
 const gather = require('co-gather');
 const { sleep } = require('mz-modules');
+
+/** 服务端返回的原始配置（cipher dataId 为密文）以及随行的 encryptedDataKey。 */
+interface ConfigFetchResult {
+  content: string | null;
+  encryptedDataKey?: string;
+  /** 容灾读取来源；'failover' 表示命中用户手工维护的明文容灾文件，用户边界据此跳过解密。 */
+  source?: ConfigContentSource;
+}
 
 export class ClientWorker extends Base implements IClientWorker {
 
@@ -32,6 +41,7 @@ export class ClientWorker extends Base implements IClientWorker {
   private isClose = false;
   private isLongPulling = false;
   private subscriptions = new Map();
+  private cipher: ConfigCipher;
   protected loggerDomain = 'Nacos';
   private debugPrefix = this.loggerDomain.toLowerCase();
   private debug = require('debug')(`${this.debugPrefix}:${process.pid}:ins-${this.uuid}:client_worker`);
@@ -51,6 +61,7 @@ export class ClientWorker extends Base implements IClientWorker {
     super(options);
     // 同一个key可能会被多次订阅，避免不必要的 `warning`
     this.setMaxListeners(100);
+    this.cipher = createConfigCipher(this.configuration);
     this.ready(true);
     this.debug('client worker start');
   }
@@ -88,6 +99,10 @@ export class ClientWorker extends Base implements IClientWorker {
     this.isClose = true;
     this.removeAllListeners();
     this.subscriptions.clear();
+    if (this.cipher) {
+      // Cascade so an injected KMS client is released (HTTP mode owns the cipher here).
+      this.cipher.close();
+    }
     this.debug('client worker closed');
   }
 
@@ -123,7 +138,14 @@ export class ClientWorker extends Base implements IClientWorker {
         }
       })();
     } else if (!is.nullOrUndefined(item.md5)) {
-      process.nextTick(() => listener(item.content));
+      // 用户边界：缓存中为密文时先解密再回调监听器
+      process.nextTick(async () => {
+        try {
+          listener(await this.cipher.decryptIfNeeded(item.dataId, item.content, item.encryptedDataKey, item.isFailover));
+        } catch (err) {
+          this._error(err);
+        }
+      });
     }
     return this;
   }
@@ -134,7 +156,8 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {void}
    */
   private async syncConfigs(list) {
-    const tasks = list.map(({ dataId, group }) => this.getConfig(dataId, group));
+    // 拉取原始内容（cipher dataId 为密文），md5 与缓存均基于密文，保证长轮询探针与服务端一致
+    const tasks = list.map(({ dataId, group }) => this.getConfigInner(dataId, group));
     const results = await gather(tasks, 5);
     for (let i = 0, len = results.length; i < len; i++) {
       const key = this.formatKey(list[ i ]);
@@ -153,16 +176,26 @@ export class ClientWorker extends Base implements IClientWorker {
         continue;
       }
 
-      const content = result.value;
+      const { content, encryptedDataKey, source } = result.value;
+      const isFailover = source === 'failover';
       const md5 = getMD5String(content, this.defaultEncoding);
       // 防止应用启动时，并发请求，导致同一个 key 重复触发
       if (item.md5 !== md5) {
         item.md5 = md5;
         item.content = content;
+        item.encryptedDataKey = encryptedDataKey;
+        item.isFailover = isFailover;
         // 异步化，避免处理逻辑异常影响到 nacos 内部
         // 这里将获取的数据直接事件的方式返回给 subscribe 一开始监听的地方
         this.debug('get new data and callback to listener', item);
-        setImmediate(() => this.emit(key, content));
+        setImmediate(async () => {
+          try {
+            // 用户边界：密文解密后再回调监听器；failover 明文直接透传不解密
+            this.emit(key, await this.cipher.decryptIfNeeded(item.dataId, content, encryptedDataKey, isFailover));
+          } catch (err) {
+            this._error(err);
+          }
+        });
       }
     }
   }
@@ -431,34 +464,93 @@ export class ClientWorker extends Base implements IClientWorker {
   }
 
   /**
-   * 获取配置
+   * encryptedDataKey 的本地持久化 key，与内容快照（'config/' 前缀）并行的独立命名空间（'edk/' 前缀）。
+   * 仅保存 KMS 加密后的数据密钥，明文数据密钥只在内存、绝不落盘。
+   */
+  private getEncryptedDataKeySnapshotKey(dataId: string, group: string): string {
+    return path.join('edk', this.getSnapshotKeyEncoded(dataId, group));
+  }
+
+  /** 从 HTTP 响应头读取 encryptedDataKey（头名大小写不敏感）。 */
+  private readEncryptedDataKeyHeader(headers: any): string | undefined {
+    if (!headers) {
+      return undefined;
+    }
+    const target = ENCRYPTED_DATA_KEY_HEADER.toLowerCase();
+    for (const name of Object.keys(headers)) {
+      if (name.toLowerCase() === target) {
+        return headers[ name ];
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * 获取配置（内部）：返回服务端/快照中的原始内容与 encryptedDataKey，不做解密。
+   * cipher dataId 的内容为密文，缓存与长轮询 md5 均基于密文，解密只在用户边界（getConfig / 监听器）进行。
+   *
+   * 服务端 fetch、快照回退双读、content/EDK 双写或双删全部由 readConfigWithFailover
+   * 在共享快照锁（cacheDir::snapshotKey 临界区）内串行执行，同 key 并发读/写/remove
+   * 不会交错，content 与 edk 永远成对写入 / 成对删除。
    * @param {String} dataId - id of the data
    * @param {String} group - group name of the data
-   * @return {String} value or null if config exists but is empty
+   * @return {ConfigFetchResult} 原始内容与 encryptedDataKey
    */
-  async getConfig(dataId, group) {
+  private async getConfigInner(dataId, group): Promise<ConfigFetchResult> {
     this.debug('calling getConfig, dataId: %s, group: %s', dataId, group);
     const key = this.getSnapshotKeyEncoded(dataId, group);
+    const encryptedDataKeySnapshotKey = this.getEncryptedDataKeySnapshotKey(dataId, group);
+    const isCipher = this.cipher.isCipherDataId(dataId);
     const result = await readConfigWithFailover({
       snapshotKey: key,
+      encryptedDataKeySnapshotKey,
+      isCipher,
       snapshot: this.snapshot,
-      fetchFromServer: () => this.httpAgent.request(this.apiRoutePath.GET, {
-        data: {
-          dataId,
-          group,
-          tenant: this.namespace,
-        },
-      }),
+      fetchFromServer: async () => {
+        // withHeaders 仅对 cipher dataId 启用，其余路径保持返回原始字符串（不改变既有行为）
+        const response = await this.httpAgent.request(this.apiRoutePath.GET, {
+          data: {
+            dataId,
+            group,
+            tenant: this.namespace,
+          },
+          withHeaders: isCipher,
+        });
+        if (isCipher) {
+          return {
+            content: response ? response.data : null,
+            encryptedDataKey: this.readEncryptedDataKeyHeader(response && response.headers),
+          };
+        }
+        return { content: response };
+      },
       readSnapshotFallback: () => this.getSnapshot(dataId, group),
       onServerError: err => this._error(err),
       clearSnapshot: async () => {
         // 同时清除 encoded 与 legacy 两种表示，避免 legacy 快照被 getSnapshot 迁回后复活已删除配置
         await this.snapshot.delete(key);
         await this.snapshot.delete(this.getSnapshotKeyLegacy(dataId, group));
+        await this.snapshot.delete(encryptedDataKeySnapshotKey);
       },
     });
-    // ClientWorker.getConfig 对外仍只返回内容，容灾来源（server/snapshot）不对外暴露
-    return result.content;
+    // 对外暴露内容与 encryptedDataKey，并保留容灾来源：failover 命中时内容为用户维护的明文，
+    // 用户边界（getConfig / 监听器）据此跳过解密，避免把明文误当 KMS 密文送去解密。
+    return { content: result.content, encryptedDataKey: result.encryptedDataKey, source: result.source };
+  }
+
+  /**
+   * 获取配置
+   * @param {String} dataId - id of the data
+   * @param {String} group - group name of the data
+   * @return {String} value or null if config exists but is empty
+   */
+  async getConfig(dataId, group) {
+    const { content, encryptedDataKey, source } = await this.getConfigInner(dataId, group);
+    if (content === null) {
+      return null;
+    }
+    // 用户边界：cipher dataId 解密后返回明文，其余原样返回；failover 明文直接透传不解密
+    return await this.cipher.decryptIfNeeded(dataId, content, encryptedDataKey, source === 'failover');
   }
 
   /**
@@ -480,13 +572,16 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {Boolean} success
    */
   async publishSingle(dataId, group, content, options?: UnitOptions) {
+    // 用户边界：cipher dataId 先加密，密文与 encryptedDataKey 一并以表单参数发布
+    const encryptResult = await this.cipher.encryptIfNeeded(dataId, content);
     const data: { [key: string]: string } = {
       dataId,
       group,
-      content,
+      content: encryptResult.content,
       tenant: this.namespace,
       type: options && options.type,
-      appName: this.appName
+      appName: this.appName,
+      ...(encryptResult.encryptedDataKey ? { [ENCRYPTED_DATA_KEY_PARAM]: encryptResult.encryptedDataKey } : {}),
     };
     // 服务端从请求头读取 casMd5（ConfigController: request.getHeader("casMd5")），
     // 放在表单参数里会被忽略，导致退化为无条件发布
@@ -541,7 +636,7 @@ export class ClientWorker extends Base implements IClientWorker {
    */
   async remove(dataId, group) {
     const encodedKey = this.getSnapshotKeyEncoded(dataId, group);
-    // 与 getConfig 共用快照锁：远端 remove + 本地清理串行，避免在途 get 晚到后复活快照
+    // 与 getConfig 共用快照锁：远端 remove + 本地清理（content/legacy/edk）串行，避免在途 get 晚到后复活快照
     return await withSnapshotLock(this.snapshot, encodedKey, async () => {
       await this.httpAgent.request(this.apiRoutePath.REMOVE, {
         method: 'DELETE',
@@ -552,9 +647,10 @@ export class ClientWorker extends Base implements IClientWorker {
         },
         dataAsQueryString: true,
       });
-      // 同步清理本地快照（encoded + legacy），避免服务端已删除的配置残留在缓存里复活
+      // 同步清理本地快照（encoded + legacy + edk），避免服务端已删除的配置残留在缓存里复活
       await this.snapshot.delete(this.getSnapshotKeyEncoded(dataId, group));
       await this.snapshot.delete(this.getSnapshotKeyLegacy(dataId, group));
+      await this.snapshot.delete(this.getEncryptedDataKeySnapshotKey(dataId, group));
       return true;
     });
   }

@@ -114,11 +114,12 @@ export class HttpAgent {
     headers?: any;
     unit?: string;
     dataAsQueryString?: boolean;
+    withHeaders?: boolean;
   } = {}) {
     // 默认为当前单元
     const unit = options.unit || this.unit;
     const ts = String(Date.now());
-    const { encode = false, method = 'GET', data, timeout = this.requestTimeout, headers = {}, dataAsQueryString = false } = options;
+    const { encode = false, method = 'GET', data, timeout = this.requestTimeout, headers = {}, dataAsQueryString = false, withHeaders = false } = options;
 
     const endTime = Date.now() + timeout;
     let lastErr;
@@ -163,11 +164,13 @@ export class HttpAgent {
         });
         this.debug('%s %s, got %s, body: %j', method, url, res.status, res.data);
         switch (res.status) {
-          case HTTP_OK:
-            if (this.decodeRes) {
-              return this.decodeRes(res, method, this.defaultEncoding)
-            }
-            return this.decodeResData(res, method);
+          case HTTP_OK: {
+            const responseData = this.decodeRes
+              ? this.decodeRes(res, method, this.defaultEncoding)
+              : this.decodeResData(res, method);
+            // withHeaders 用于透出响应头（如 KMS 加密配置的 Encrypted-Data-Key），默认行为不变
+            return withHeaders ? { data: responseData, headers: res.headers } : responseData;
+          }
           case HTTP_NOT_FOUND:
             return null;
           case HTTP_CONFLICT:
