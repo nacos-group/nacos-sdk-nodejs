@@ -93,6 +93,9 @@ const currentContent = await configClient.getConfig('test', 'DEFAULT_GROUP');
 const casMd5 = crypto.createHash('md5').update(currentContent || '').digest('hex');
 const published = await configClient.publishConfigCas('test', 'DEFAULT_GROUP', 'hello=nacos', casMd5);
 console.log('cas publish:', published); // false when casMd5 mismatched
+// NOTE: this read-then-CAS pattern only works for plaintext dataIds. For a `cipher-` dataId the
+// server compares casMd5 against the CIPHERTEXT while getConfig() returns decrypted text, so the
+// md5 computed here can never match. See "Encrypted Configuration (Aliyun KMS)" below.
 
 // get config
 const content = await configClient.getConfig('test', 'DEFAULT_GROUP');
@@ -419,7 +422,7 @@ function createOidcRoleArnProvider(options) {
 
 ## Encrypted Configuration (Aliyun KMS)
 
-`nacos-config` transparently encrypts and decrypts configurations whose dataId starts with the `cipher-` prefix, matching the wire format used by the Java / Go / Python SDKs (envelope encryption: the client obtains a data key from KMS, AES-encrypts the content with it, and ships the KMS-encrypted data key — `encryptedDataKey` — alongside the ciphertext over both HTTP and gRPC).
+`nacos-config` transparently encrypts and decrypts configurations whose dataId starts with the `cipher-` prefix, matching the wire format used by the Java / Go / Python SDKs. Envelope encryption is the main path: the client obtains a data key from KMS, AES-encrypts the content with it, and ships the KMS-encrypted data key — `encryptedDataKey` — alongside the ciphertext over both HTTP and gRPC. The direct form instead hands the whole value to KMS `Encrypt`/`Decrypt` under the CMK. Both forms put the same bytes on the wire as the other SDKs, so a dataId written by one language can be read by another.
 
 Supported dataId forms:
 
@@ -455,8 +458,10 @@ KMS-related client options:
 | kmsRegionId | String | | Region used to resolve the KMS endpoint |
 | kmsEndpoint | String | | KMS OpenAPI endpoint, e.g. `'kms.cn-hangzhou.aliyuncs.com'`; auto-resolved from `kmsRegionId` |
 | kmsKeyId | String | `'alias/acs/mse'` | CMK used to generate data keys |
+| kmsCaFileContent | String | | Private CA certificate (PEM) content, needed to trust a dedicated KMS gateway endpoint. Takes precedence over `kmsCaFilePath` |
+| kmsCaFilePath | String | | Path to a private CA certificate (PEM) file; download it from the KMS console (实例管理 → 实例详情页) |
 | kmsClient | Object | | Custom `IKmsClient` (`encrypt` / `generateDataKey` / `decrypt`, optional `describeKey` / `setDeletionProtection` / `close`); overrides the built-in gateway client |
-| kmsClientFactory | Function | | `(configuration) => IKmsClient`, e.g. a ClientKey/DKMS adapter reading the `kmsClientKeyContent` / `kmsClientKeyFilePath` / `kmsPassword` / `kmsCaFileContent` / `kmsCaFilePath` passthrough options |
+| kmsClientFactory | Function | | `(configuration) => IKmsClient`, e.g. a ClientKey/DKMS adapter reading the `kmsClientKeyContent` / `kmsClientKeyFilePath` / `kmsPassword` passthrough options. Required for ClientKey auth — setting those options without a factory is rejected |
 | kmsCacheEnabled | Boolean | `true` | In-memory data-key cache |
 | kmsCacheMaxSize | Number | `1000` | Max cached data keys (FIFO eviction) |
 | kmsCacheAfterAccessSeconds | Number | `3600` | Evict a data key this long after last access |
@@ -465,6 +470,8 @@ KMS-related client options:
 Behavior notes (aligned with the Java MSE client):
 
 - Caches, snapshots, md5 and long-poll/probe comparisons all operate on **ciphertext**; decryption happens only at user boundaries (`getConfig`, listeners, change notifications).
+- `publishConfigCas` is therefore not usable for a read-modify-write cycle on a `cipher-` dataId: the server compares `casMd5` against the ciphertext, but no public API hands you that ciphertext (`getConfig` and listeners both return decrypted text), so there is no md5 you can pass that would match. This is inherent to client-side encryption, not specific to this SDK — the Java client has the same limitation. Publish without CAS, or use a plaintext dataId when you need CAS.
+- The AES payload is always **UTF-8**, whatever `defaultEncoding` is set to. That option describes how HTTP response bodies are decoded off the wire; the ciphertext format is shared with the Java / Go / Python clients, which all encrypt UTF-8 bytes.
 - Snapshots persist the ciphertext plus a parallel `edk/` entry holding the `encryptedDataKey`, so disaster recovery keeps working; both are removed together on `remove` / not-found.
 - Failover files (`cacheDir/failover/...`) are user-maintained **plaintext** by contract and are never sent to KMS — they can be used as an emergency override for a `cipher-` dataId.
 - Publishing a `cipher-` config schedules best-effort CMK **deletion protection** (deduplicated per key, never blocks or fails the publish).
@@ -472,7 +479,19 @@ Behavior notes (aligned with the Java MSE client):
 - A decrypt failure at read time surfaces via the client `error` event instead of handing untrusted content to listeners.
 - `close()` cascades to the cipher and releases an injected `kmsClient` (idempotent).
 
-For a dedicated KMS instance (ClientKey/DKMS), inject an adapter — the SDK intentionally does not hard-depend on the DKMS SDK:
+Reaching a **dedicated KMS instance** (`<instance-id>.cryptoservice.kms.aliyuncs.com`) depends on which identity you authenticate with.
+
+With **AK/STS**, the built-in client is enough: point `kmsEndpoint` at the instance endpoint and supply that instance's private CA. Instance keys are VPC-only by default, so if you call from outside the VPC, turn on public access in the console (实例管理 → 实例详情页) first.
+
+```js
+const client = new NacosConfigClient({
+  serverAddr: '127.0.0.1:8848',
+  kmsEndpoint: 'kst-xxxxxxxxxxxx.cryptoservice.kms.aliyuncs.com',
+  kmsCaFilePath: '/etc/nacos/kms/ca.pem',
+});
+```
+
+With a **ClientKey / application access point (AAP)**, inject an adapter. ClientKey auth speaks the DKMS instance protocol (protobuf body, RSA-signed requests), which the built-in client does not implement — the SDK intentionally does not hard-depend on a DKMS SDK. Setting `kmsClientKeyContent` / `kmsClientKeyFilePath` without a `kmsClientFactory` is rejected on first use rather than silently falling back to AK auth:
 
 ```js
 const client = new NacosConfigClient({

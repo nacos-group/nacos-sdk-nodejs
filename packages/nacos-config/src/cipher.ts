@@ -18,6 +18,8 @@ import * as crypto from 'crypto';
 import { ClientOptionKeys, IConfiguration } from './interface';
 import { resolveAliyunCredentialsAsync } from './aliyun_auth';
 
+const fs = require('mz/fs');
+
 /** dataId prefix that triggers KMS envelope encryption (aligned with Java / Go / Python SDK). */
 export const CIPHER_PREFIX = 'cipher-';
 
@@ -47,7 +49,8 @@ const DEFAULT_KMS_CACHE_MAX_SIZE = 1000;
 const DEFAULT_KMS_CACHE_AFTER_ACCESS_MS = 60 * 60 * 1000;
 const DEFAULT_KMS_CACHE_AFTER_WRITE_MS = 24 * 60 * 60 * 1000;
 
-// Longest matching prefix wins, so `cipher-kms-aes-128-*` never falls through to a shorter alias.
+// Algorithm name -> KMS key spec. The prefixes are equal length and mutually exclusive, so
+// matchKeySpec below can stop at the first hit; keep it that way if a new entry is added.
 const ALGORITHM_KEY_SPECS: Array<{ prefix: string; keySpec: string }> = [
   { prefix: KMS_AES_128_ALGORITHM, keySpec: AES_128_KEY_SPEC },
   { prefix: KMS_AES_256_ALGORITHM, keySpec: AES_256_KEY_SPEC },
@@ -62,16 +65,19 @@ const ALGORITHM_KEY_SPECS: Array<{ prefix: string; keySpec: string }> = [
  * supporting bare `cipher-` dataIds (the direct, non-envelope path); describeKey and
  * setDeletionProtection remain optional.
  *
- * Wire contract: `encrypt` takes a Base64-encoded plaintext and returns an opaque ciphertext
- * blob; `decrypt` takes a ciphertext blob and returns the Base64-encoded plaintext. ConfigCipher
- * owns the Base64 and text-encoding conversion, so implementations pass KMS values through as-is.
+ * Wire contract: values pass through ConfigCipher untouched in both directions -- `encrypt` takes
+ * the raw config text and returns an opaque Base64 ciphertext blob, `decrypt` takes a blob and
+ * returns whatever KMS decrypted. What that decrypted value means depends on the caller: on the
+ * direct bare `cipher-` path it is the config text itself, while on the envelope path `decrypt` is
+ * handed an `encryptedDataKey` and returns a Base64 data key (same as `generateDataKey`'s
+ * `plaintext`), which ConfigCipher Base64-decodes before using it as an AES key.
  */
 export interface IKmsClient {
-  /** Encrypt: directly encrypts a Base64-encoded plaintext under the CMK, for bare `cipher-` dataIds that carry no envelope data key. Returns the opaque KMS ciphertext blob. */
+  /** Encrypt: directly encrypts the config text under the CMK, for bare `cipher-` dataIds that carry no envelope data key. The plaintext goes on the wire raw (not Base64-wrapped) so other SDKs can read it; returns the opaque KMS ciphertext blob. */
   encrypt(plaintext: string, keyId?: string): Promise<string>;
   /** GenerateDataKey: returns the Base64 plaintext data key and its KMS-encrypted form. */
   generateDataKey(keyId: string, keySpec: string): Promise<{ plaintext: string; ciphertextBlob: string }>;
-  /** Decrypt: turns a ciphertext blob back into its Base64-encoded plaintext -- the data key on the envelope path, or the config text on the direct bare `cipher-` path. */
+  /** Decrypt: turns a ciphertext blob back into its plaintext -- a Base64 data key on the envelope path, or the raw config text on the direct bare `cipher-` path. */
   decrypt(ciphertextBlob: string): Promise<string>;
   /** DescribeKey: returns CMK metadata (optional; used to resolve the key ARN for deletion protection). */
   describeKey?(keyId: string): Promise<any>;
@@ -86,7 +92,8 @@ export interface IKmsClient {
  * application plug in a ClientKey/DKMS client (dedicated KMS instance) without nacos-config taking a
  * hard dependency on that SDK: the app supplies the factory and reads the DKMS passthrough options
  * (kmsClientKeyContent/FilePath, kmsPassword, kmsCaFileContent/FilePath, kmsEndpoint) off the
- * configuration it is handed.
+ * configuration it is handed. A dedicated gateway reached with AK/STS needs no factory — the
+ * built-in client honors kmsCaFileContent/kmsCaFilePath itself.
  */
 export type KmsClientFactory = (configuration: IConfiguration) => IKmsClient;
 
@@ -108,15 +115,12 @@ function isCipherDataId(dataId: string): boolean {
 }
 
 function matchKeySpec(dataId: string): string | null {
-  let matchedKeySpec: string | null = null;
-  let matchedLength = 0;
   for (const algorithm of ALGORITHM_KEY_SPECS) {
-    if (dataId.indexOf(algorithm.prefix) === 0 && algorithm.prefix.length > matchedLength) {
-      matchedKeySpec = algorithm.keySpec;
-      matchedLength = algorithm.prefix.length;
+    if (dataId.indexOf(algorithm.prefix) === 0) {
+      return algorithm.keySpec;
     }
   }
-  return matchedKeySpec;
+  return null;
 }
 
 function aesAlgorithmForKeyLength(keyLength: number): string {
@@ -134,37 +138,24 @@ function aesAlgorithmForKeyLength(keyLength: number): string {
 
 // AES/ECB/PKCS5Padding, kept for cross-SDK interoperability. node auto-padding is PKCS#7,
 // which is identical to PKCS#5 for the 16-byte AES block size.
-// Node natively supports only a handful of encodings; iconv-lite (already a nacos-config
-// dependency for GBK responses) covers the rest such as GBK/GB2312, so cipher content can
-// round-trip with the Java / Go / Python SDKs regardless of the configured text encoding.
-function encodeText(value: string, encoding: string): Buffer {
-  if (Buffer.isEncoding(encoding)) {
-    return Buffer.from(value, encoding as any);
-  }
-  const iconv = require('iconv-lite');
-  return iconv.encode(value, encoding);
-}
-
-function decodeText(value: Buffer, encoding: string): string {
-  if (Buffer.isEncoding(encoding)) {
-    return value.toString(encoding as any);
-  }
-  const iconv = require('iconv-lite');
-  return iconv.decode(value, encoding);
-}
-
-function aesEcbEncryptToBase64(plaintext: string, base64Key: string, encoding: string): string {
+// The payload charset is pinned to UTF-8 and deliberately does NOT follow the client-level
+// defaultEncoding: that option describes how HTTP response bodies are decoded off the wire, whereas
+// this is the shared cross-language ciphertext format -- Java (AesUtils, ENCODE_UTF8), Go
+// (DecodeString2Utf8Bytes) and Python (content.encode("utf-8")) all encrypt UTF-8 bytes, and one
+// dataId is read by all of them. Honouring a per-client charset here would let a GBK-configured
+// client write ciphertext every other SDK decodes as mojibake.
+function aesEcbEncryptToBase64(plaintext: string, base64Key: string): string {
   const key = Buffer.from(base64Key, 'base64');
   const cipher = crypto.createCipheriv(aesAlgorithmForKeyLength(key.length), key, null);
-  const encrypted = Buffer.concat([ cipher.update(encodeText(plaintext, encoding)), cipher.final() ]);
+  const encrypted = Buffer.concat([ cipher.update(Buffer.from(plaintext, 'utf8')), cipher.final() ]);
   return encrypted.toString('base64');
 }
 
-function aesEcbDecryptFromBase64(base64Ciphertext: string, base64Key: string, encoding: string): string {
+function aesEcbDecryptFromBase64(base64Ciphertext: string, base64Key: string): string {
   const key = Buffer.from(base64Key, 'base64');
   const decipher = crypto.createDecipheriv(aesAlgorithmForKeyLength(key.length), key, null);
   const decrypted = Buffer.concat([ decipher.update(Buffer.from(base64Ciphertext, 'base64')), decipher.final() ]);
-  return decodeText(decrypted, encoding);
+  return decrypted.toString('utf8');
 }
 
 /**
@@ -201,6 +192,12 @@ export class AliyunKmsClient implements IKmsClient {
   // Overall retry deadline (ms) for this client. Defaults to KMS_TIMEOUT_MS; held as a field so
   // it can be tuned and so tests can shrink it instead of waiting on the real 3s budget.
   private timeoutMs = KMS_TIMEOUT_MS;
+  // Memoized CA resolution. Both sources are client options fixed for this client's lifetime,
+  // so re-reading a PEM from disk on every encrypt/decrypt would be pure waste. Consequence: a CA
+  // file rotated in place is not picked up until the process restarts -- same as the Java and Go
+  // clients, which also read the CA once at client construction. A rejected read is NOT memoized,
+  // so a transient filesystem error can recover on the next call instead of poisoning the client.
+  private caPromise: Promise<string | undefined> | null = null;
 
   constructor(configuration: IConfiguration) {
     this.configuration = configuration;
@@ -211,6 +208,15 @@ export class AliyunKmsClient implements IKmsClient {
     // injectable and honors any externally provided instance.
     if (this.client && this.clientCredentialsKey === null) {
       return this.client;
+    }
+    // ClientKey/AAP authentication needs the DKMS instance protocol (protobuf body + RSA request
+    // signing), which this client does not speak. Rejecting here beats an opaque signature failure
+    // from the gateway and points at the seam that does support it.
+    if (this.configuration.get(ClientOptionKeys.KMS_CLIENT_KEY_CONTENT) ||
+      this.configuration.get(ClientOptionKeys.KMS_CLIENT_KEY_FILE_PATH)) {
+      throw new Error('[Nacos#Cipher] kmsClientKeyContent / kmsClientKeyFilePath require a kmsClientFactory: ' +
+        'the built-in client authenticates with AK/STS (plus an optional CA for a dedicated gateway) ' +
+        'and cannot use a ClientKey.');
     }
     let kmsModule: any;
     try {
@@ -255,10 +261,44 @@ export class AliyunKmsClient implements IKmsClient {
     if (regionId) {
       config.regionId = regionId;
     }
+    const ca = await this.resolveCa();
+    if (ca) {
+      // A dedicated gateway (<instance>.cryptoservice.kms.aliyuncs.com) presents a private CA; the
+      // shared gateway uses a publicly trusted one and needs nothing here. Only set it when
+      // non-empty: an empty string would be forwarded to node's https as ca:'' and break the
+      // handshake for the public-gateway case.
+      config.ca = ca;
+    }
     this.models = kmsModule;
     this.client = new ClientCtor(config);
     this.clientCredentialsKey = credentialsKey;
     return this.client;
+  }
+
+  private resolveCa(): Promise<string | undefined> {
+    if (!this.caPromise) {
+      this.caPromise = this.loadCa().catch(err => {
+        this.caPromise = null;
+        throw err;
+      });
+    }
+    return this.caPromise;
+  }
+
+  private async loadCa(): Promise<string | undefined> {
+    const content = this.configuration.get(ClientOptionKeys.KMS_CA_FILE_CONTENT);
+    if (content) {
+      return content;
+    }
+    const filePath = this.configuration.get(ClientOptionKeys.KMS_CA_FILE_PATH);
+    if (!filePath) {
+      return undefined;
+    }
+    try {
+      return await fs.readFile(filePath, 'utf8');
+    } catch (err) {
+      throw new Error(`[Nacos#Cipher] cannot read kmsCaFilePath "${filePath}": ${err.message}`);
+    }
   }
 
   private async requestWithRetry<T>(operation: () => Promise<T>): Promise<T> {
@@ -316,7 +356,7 @@ export class AliyunKmsClient implements IKmsClient {
       const response = await client.decrypt(request);
       const plaintext = response && response.body ? response.body.plaintext : undefined;
       if (!plaintext) {
-        throw new Error('[Nacos#Cipher] KMS Decrypt returned an empty data key');
+        throw new Error('[Nacos#Cipher] KMS Decrypt returned an empty plaintext');
       }
       return plaintext;
     });
@@ -418,11 +458,14 @@ class DataKeyCache {
 }
 
 /**
- * Applies KMS envelope encryption/decryption to config content, triggered by the `cipher-`
- * dataId prefix. Mirrors the Java / Go / Python wire format: GenerateDataKey → AES/ECB/PKCS5
- * with the Base64-decoded data key → Base64. The plaintext data key is cached in memory
- * (keyed by encryptedDataKey) to avoid a KMS round trip on every read/notification, and is
- * never persisted.
+ * Applies KMS encryption/decryption to config content, triggered by the `cipher-` dataId prefix.
+ * Two shapes, both mirroring the Java / Go / Python clients:
+ *   - `cipher-kms-aes-128-*` / `cipher-kms-aes-256-*` (envelope): GenerateDataKey → AES/ECB/PKCS5
+ *     over the UTF-8 content with the Base64-decoded data key → Base64, carrying the KMS-encrypted
+ *     data key alongside as `encryptedDataKey`.
+ *   - any other `cipher-*` (direct): the whole value goes to KMS Encrypt/Decrypt as-is.
+ * The plaintext data key is cached in memory (keyed by encryptedDataKey) to avoid a KMS round trip
+ * on every read/notification, and is never persisted.
  */
 export class ConfigCipher {
 
@@ -461,16 +504,17 @@ export class ConfigCipher {
     if (!keySpec) {
       // Bare `cipher-*` dataId (no envelope data key): let KMS encrypt the whole value directly,
       // matching the legacy Nacos / Java KMS path where the CMK protects the content itself.
-      // The KMS Encrypt API requires a Base64-encoded plaintext, so encode the config text with
-      // the configured encoding first; the returned ciphertext blob is carried verbatim.
-      const plaintextBase64 = encodeText(content, this.getTextEncoding()).toString('base64');
-      const encrypted = await this.getKmsClient().encrypt(plaintextBase64, this.getKeyId());
+      // The config text goes on the wire as-is: Java (RamKmsEncryptor.encrypt), Go
+      // (KmsBasePlugin + RamKmsClient.Encrypt) and the official KMS transfer SDKs all pass the raw
+      // string here, and the transfer handlers turn it into bytes with no Base64 decode. Wrapping it
+      // would self-round-trip but leave every other SDK reading this dataId as garbage.
+      const encrypted = await this.getKmsClient().encrypt(content, this.getKeyId());
       return { content: encrypted };
     }
     const { plaintext, ciphertextBlob } = await this.getKmsClient().generateDataKey(this.getKeyId(), keySpec);
     this.dataKeyCache.put(ciphertextBlob, plaintext);
     return {
-      content: aesEcbEncryptToBase64(content, plaintext, this.getTextEncoding()),
+      content: aesEcbEncryptToBase64(content, plaintext),
       encryptedDataKey: ciphertextBlob,
     };
   }
@@ -496,17 +540,17 @@ export class ConfigCipher {
       return content;
     }
     if (!matchKeySpec(dataId)) {
-      // Bare `cipher-*` dataId: the content itself is KMS ciphertext, so decrypt it directly.
-      // KMS Decrypt returns the Base64-encoded plaintext, so decode it back to the config text
-      // with the configured encoding (symmetric with the direct encrypt path above).
-      const plaintextBase64 = await this.getKmsClient().decrypt(content);
-      return decodeText(Buffer.from(plaintextBase64, 'base64'), this.getTextEncoding());
+      // Bare `cipher-*` dataId: the content itself is KMS ciphertext, so decrypt it directly. The
+      // service hands back the exact string that was encrypted -- the raw config text -- so return
+      // it verbatim. (The envelope path below gets the same verbatim value, but there the payload is
+      // a Base64 data key rather than user text, which is why only that path decodes it.)
+      return await this.getKmsClient().decrypt(content);
     }
     if (!encryptedDataKey) {
       return content;
     }
     const plainDataKey = await this.resolvePlainDataKey(encryptedDataKey);
-    return aesEcbDecryptFromBase64(content, plainDataKey, this.getTextEncoding());
+    return aesEcbDecryptFromBase64(content, plainDataKey);
   }
 
   /**
@@ -599,6 +643,13 @@ export class ConfigCipher {
   }
 
   private getKmsClient(): IKmsClient {
+    // close() released whatever client we had. Building another one here would leak a connection
+    // pool nothing will ever close again (a late push notification after shutdown is exactly how
+    // this gets reached), and reusing the released one fails opaquely inside the transport. Throw a
+    // named lifecycle error instead; callers already route cipher failures to their error channel.
+    if (this.closed) {
+      throw new Error('[Nacos#Cipher] ConfigCipher is closed and can no longer reach KMS');
+    }
     if (!this.kmsClient) {
       this.kmsClient = this.createKmsClient();
     }
@@ -624,10 +675,6 @@ export class ConfigCipher {
 
   private getKeyId(): string {
     return this.configuration.get(ClientOptionKeys.KMS_KEY_ID) || DEFAULT_KMS_KEY_ID;
-  }
-
-  private getTextEncoding(): string {
-    return this.configuration.get(ClientOptionKeys.DEFAULT_ENCODING) || 'utf8';
   }
 
 }

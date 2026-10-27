@@ -29,7 +29,10 @@ async function main() {
     // KMS public gateway
     kmsRegionId: process.env.KMS_REGION_ID || 'cn-hangzhou',
     // kmsKeyId: 'alias/acs/mse',  // default CMK, aligned with the Java MSE client
-    // Dedicated KMS instance (ClientKey/DKMS): inject an adapter instead
+    // Dedicated KMS instance with AK/STS: point kmsEndpoint at the instance and trust its private CA
+    // kmsEndpoint: 'kst-xxxxxxxxxxxx.cryptoservice.kms.aliyuncs.com',
+    // kmsCaFilePath: '/etc/nacos/kms/ca.pem',
+    // Dedicated KMS instance with a ClientKey / AAP: inject an adapter (DKMS instance protocol)
     // kmsClientFactory: configuration => createDkmsAdapter({ ... }),
   });
   await configClient.ready();

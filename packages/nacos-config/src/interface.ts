@@ -369,15 +369,20 @@ export interface ClientOptions {
    * is given, and before falling back to the built-in Alibaba Cloud gateway client.
    */
   kmsClientFactory?: (configuration: IConfiguration) => any;
-  /** DKMS ClientKey JSON content (dedicated KMS instance); consumed by a custom kmsClientFactory */
+  /** DKMS ClientKey JSON content (dedicated KMS instance); requires kmsClientFactory */
   kmsClientKeyContent?: string;
-  /** DKMS ClientKey file path; consumed by a custom kmsClientFactory */
+  /** DKMS ClientKey file path; requires kmsClientFactory */
   kmsClientKeyFilePath?: string;
-  /** DKMS ClientKey password; consumed by a custom kmsClientFactory */
+  /** DKMS ClientKey password; requires kmsClientFactory */
   kmsPassword?: string;
-  /** DKMS CA certificate (PEM) content; consumed by a custom kmsClientFactory */
+  /**
+   * Private CA certificate (PEM) content, used to trust a dedicated KMS gateway
+   * ('<instance>.cryptoservice.kms.aliyuncs.com'). The built-in client honors this and
+   * authenticates with AK/STS; takes precedence over kmsCaFilePath. A custom kmsClientFactory
+   * can read it too. Omit for the shared gateway, whose certificate is publicly trusted.
+   */
   kmsCaFileContent?: string;
-  /** DKMS CA certificate file path; consumed by a custom kmsClientFactory */
+  /** Path to a private CA certificate (PEM) for a dedicated KMS gateway; see kmsCaFileContent */
   kmsCaFilePath?: string;
   /** KMS OpenAPI endpoint, e.g. 'kms.cn-hangzhou.aliyuncs.com'; auto-resolved from kmsRegionId when omitted */
   kmsEndpoint?: string;

@@ -127,11 +127,15 @@ export function readConfigWithFailover(hooks: DisasterRecoveryHooks): Promise<Co
 
     // 落原始内容快照（空内容由 Snapshot.save 统一按删除处理）
     await snapshot.save(snapshotKey, content || '');
-    // encryptedDataKey 单独持久化；无 edk 时清理旧值避免误用（与内容写入同临界区，保证成对）
-    if (isCipher && encryptedDataKey) {
-      await snapshot.save(encryptedDataKeySnapshotKey, encryptedDataKey);
-    } else {
-      await snapshot.delete(encryptedDataKeySnapshotKey);
+    // encryptedDataKey 单独持久化；cipher 配置本次没带 edk 时清掉旧值，避免与内容错配
+    // （与内容写入同临界区，保证成对）。非 cipher 配置的 key 下从来不会写 edk 快照，
+    // 整段跳过，免得每次明文读取都白付一次 rimraf 系统调用。
+    if (isCipher) {
+      if (encryptedDataKey) {
+        await snapshot.save(encryptedDataKeySnapshotKey, encryptedDataKey);
+      } else {
+        await snapshot.delete(encryptedDataKeySnapshotKey);
+      }
     }
     return { content, source: 'server' as ConfigContentSource, encryptedDataKey };
   });

@@ -27,6 +27,7 @@ import { GrpcConnection } from 'nacos-common';
 import { createDefaultConfiguration } from './utils';
 
 const { rimraf } = require('mz-modules');
+const fs = require('mz/fs');
 
 const cacheDir = path.join(__dirname, '.cache_cipher');
 
@@ -56,9 +57,10 @@ class FakeKmsClient implements IKmsClient {
 
   async encrypt(plaintext: string, keyId?: string): Promise<string> {
     this.encryptCalls.push({ plaintext, keyId });
-    // Faithful stand-in for the KMS Encrypt API: the caller passes a Base64-encoded plaintext and
-    // the service returns an opaque ciphertext blob. Record blob -> Base64 plaintext in the same
-    // keyStore the envelope path uses, so decrypt hands back exactly what a real KMS would return.
+    // Payload-agnostic on purpose: Encrypt/Decrypt.Plaintext carries whatever the caller put in and
+    // the service hands it back unchanged. On the bare cipher- path that is the raw config text --
+    // the official KMS transfer SDKs turn the wire value into bytes with `getBytes(charset)` and no
+    // Base64 decode, so the fake must not decode either.
     const ciphertextBlob = `direct-${this.encryptCalls.length}`;
     this.keyStore.set(ciphertextBlob, plaintext);
     return ciphertextBlob;
@@ -66,8 +68,11 @@ class FakeKmsClient implements IKmsClient {
 
   async decrypt(ciphertextBlob: string): Promise<string> {
     this.decryptCalls.push(ciphertextBlob);
-    // A real KMS Decrypt returns the Base64-encoded plaintext. The keyStore holds Base64 for both
-    // the envelope data key and the direct-encrypt blob, so return it verbatim (no text decoding).
+    // Two callers share this method with two different payload meanings, so the fake must not
+    // interpret either: the envelope path decrypts a data key (whose plaintext IS Base64, per
+    // GenerateDataKeyResponseBody) while the bare cipher- path decrypts config text (raw). Returning
+    // the stored value verbatim is what the real service does and leaves the interpretation -- and
+    // therefore any encoding bug -- visible in the caller under test.
     const plaintext = this.keyStore.get(ciphertextBlob);
     if (!plaintext) {
       throw new Error(`FakeKmsClient: unknown ciphertextBlob ${ciphertextBlob}`);
@@ -218,8 +223,8 @@ describe('test/cipher.test.ts', () => {
       assert(decrypted === plaintext);
     });
 
-    it('should apply the configured text encoding to cipher content (GBK vs UTF-8)', async () => {
-      const dataId = 'cipher-kms-aes-128-gbk';
+    it('should encrypt cipher content as UTF-8 regardless of the transport defaultEncoding', async () => {
+      const dataId = 'cipher-kms-aes-128-encoding';
       const plaintext = 'db.password=中文密钥';
       const utf8Cipher = newCipher({ defaultEncoding: 'utf8' }, new FakeKmsClient());
       const gbkCipher = newCipher({ defaultEncoding: 'gbk' }, new FakeKmsClient());
@@ -227,26 +232,20 @@ describe('test/cipher.test.ts', () => {
       const utf8Encrypted = await utf8Cipher.encryptIfNeeded(dataId, plaintext);
       const gbkEncrypted = await gbkCipher.encryptIfNeeded(dataId, plaintext);
 
-      // Each cipher owns its FakeKmsClient, so both plaintext data keys are the deterministic
-      // first-call key; any ciphertext difference comes purely from the applied text encoding.
-      assert(utf8Encrypted.content !== gbkEncrypted.content);
-
-      const gbkDecrypted = await gbkCipher.decryptIfNeeded(dataId, gbkEncrypted.content, gbkEncrypted.encryptedDataKey);
-      assert(gbkDecrypted === plaintext);
-    });
-
-    it('should apply a native Node text encoding (utf16le) to cipher content', async () => {
-      const dataId = 'cipher-kms-aes-128-utf16';
-      const plaintext = 'secret=值';
-      const utf8Cipher = newCipher({ defaultEncoding: 'utf8' }, new FakeKmsClient());
-      const utf16Cipher = newCipher({ defaultEncoding: 'utf16le' }, new FakeKmsClient());
-
-      const utf8Encrypted = await utf8Cipher.encryptIfNeeded(dataId, plaintext);
-      const utf16Encrypted = await utf16Cipher.encryptIfNeeded(dataId, plaintext);
-      assert(utf8Encrypted.content !== utf16Encrypted.content);
-
-      const roundTripped = await utf16Cipher.decryptIfNeeded(dataId, utf16Encrypted.content, utf16Encrypted.encryptedDataKey);
-      assert(roundTripped === plaintext);
+      // defaultEncoding describes how HTTP response bodies are decoded off the wire, not the cipher
+      // payload charset. Java (AesUtils ... ENCODE_UTF8), Go (DecodeString2Utf8Bytes) and Python
+      // (content.encode("utf-8")) all AES-encrypt UTF-8 bytes, and one config is read by all of them,
+      // so a GBK-configured client must not write ciphertext the others would mojibake. Each cipher
+      // owns its FakeKmsClient, so both data keys are the deterministic first-call key and any
+      // ciphertext difference could only come from the payload encoding.
+      assert(gbkEncrypted.content === utf8Encrypted.content,
+        'the transport encoding must not change the cipher payload bytes');
+      // Pin the payload positively too, by recomputing the UTF-8 AES/ECB/PKCS5 pass independently.
+      const expected = aesEcb(plaintext, Buffer.alloc(16, 1).toString('base64'), 'aes-128-ecb');
+      assert(utf8Encrypted.content === expected, 'cipher content must be UTF-8 AES/ECB/PKCS5');
+      // And a GBK-configured client must still read back what a UTF-8 client wrote.
+      const crossRead = await gbkCipher.decryptIfNeeded(dataId, utf8Encrypted.content, utf8Encrypted.encryptedDataKey);
+      assert(crossRead === plaintext, 'a GBK transport client must decode cipher content as UTF-8');
     });
 
     it('should produce ciphertext byte-identical to a manual AES/ECB/PKCS5 pass', async () => {
@@ -332,9 +331,14 @@ describe('test/cipher.test.ts', () => {
       const cipher = newCipher({}, kms);
       const result = await cipher.encryptIfNeeded('cipher-myapp', 'secret-value');
       assert(kms.encryptCalls.length === 1, 'bare cipher- must call KMS encrypt directly');
-      // Wire contract: KMS Encrypt requires a Base64-encoded plaintext, so the direct path must
-      // Base64-encode the config value before sending it (never pass the raw text on the wire).
-      assert(kms.encryptCalls[0].plaintext === Buffer.from('secret-value', 'utf8').toString('base64'));
+      // Cross-language contract: Java (KmsEncryptor/RamKmsEncryptor.encrypt), Go (KmsBasePlugin +
+      // RamKmsClient.Encrypt) and the official transfer SDKs all hand KMS the raw config text on
+      // this path. Base64-wrapping it here would make Node-written bare cipher- configs unreadable
+      // by every other SDK, so pin the raw form and reject the Base64 form explicitly.
+      assert(kms.encryptCalls[0].plaintext === 'secret-value',
+        'direct KMS Encrypt must carry the raw config text');
+      assert(kms.encryptCalls[0].plaintext !== Buffer.from('secret-value', 'utf8').toString('base64'),
+        'direct KMS Encrypt must not Base64-wrap the config text');
       assert(kms.generateDataKeyCalls.length === 0, 'direct path must not generate a data key');
       assert(result.encryptedDataKey === undefined, 'direct path carries no encryptedDataKey');
       assert(typeof result.content === 'string' && result.content !== 'secret-value');
@@ -349,14 +353,14 @@ describe('test/cipher.test.ts', () => {
       assert(kms.decryptCalls.length === 1, 'direct decrypt must call KMS decrypt on the content');
     });
 
-    it('should Base64-decode the plaintext KMS returns on the direct cipher- decrypt path', async () => {
+    it('should read a bare cipher- config written by the Java or Go SDK', async () => {
       const kms = new FakeKmsClient();
       const cipher = newCipher({}, kms);
-      // Present the blob exactly as the KMS service would: decrypt(blob) yields the Base64-encoded
-      // plaintext. The direct path must decode that Base64 back to the original config text.
-      const blob = await kms.encrypt(Buffer.from('secret-value', 'utf8').toString('base64'));
+      // Simulate the other SDKs exactly: they publish the blob KMS produced from the RAW text, so a
+      // Node client that Base64-decodes the returned plaintext would corrupt a shared config here.
+      const blob = await kms.encrypt('secret-value');
       const decrypted = await cipher.decryptIfNeeded('cipher-myapp', blob);
-      assert(decrypted === 'secret-value', 'direct decrypt must Base64-decode the KMS plaintext');
+      assert(decrypted === 'secret-value', 'direct decrypt must return the KMS plaintext verbatim');
       assert(kms.decryptCalls.length === 1, 'direct decrypt must call KMS decrypt on the content');
     });
 
@@ -499,6 +503,102 @@ describe('test/cipher.test.ts', () => {
         'readTimeout must bound a hung read so the retry deadline is actually enforceable');
       assert(typeof capturedConfig.connectTimeout === 'number' && capturedConfig.connectTimeout > 0,
         'connectTimeout must bound a hung connect');
+    });
+  });
+
+  describe('AliyunKmsClient dedicated-gateway CA', () => {
+
+    const CA_PEM = '-----BEGIN CERTIFICATE-----\nMIIBfakeCa\n-----END CERTIFICATE-----\n';
+
+    // Drive ensureClient without credentials or network and hand back the config it built the
+    // KMS client from. ensureClient prefers `kmsModule.default`, so stubbing .default captures it.
+    function captureKmsConfig(): () => any {
+      const aliyunAuth = require('../src/aliyun_auth');
+      mm(aliyunAuth, 'resolveAliyunCredentialsAsync', async () => ({ accessKeyId: 'ak', accessKeySecret: 'sk' }));
+      const kmsSdk = require('@alicloud/kms20160120');
+      let capturedConfig: any;
+      mm(kmsSdk, 'default', function (config: any) { capturedConfig = config; });
+      return () => capturedConfig;
+    }
+
+    async function writeCaFile(name: string, content: string): Promise<string> {
+      const caPath = path.join(cacheDir, 'ca', name);
+      await fs.mkdir(path.dirname(caPath), { recursive: true });
+      await fs.writeFile(caPath, content, 'utf8');
+      return caPath;
+    }
+
+    it('should hand kmsCaFileContent to the KMS client so a dedicated gateway private CA is trusted', async () => {
+      const getConfig = captureKmsConfig();
+      const kms = new AliyunKmsClient(createDefaultConfiguration({
+        kmsEndpoint: 'kst-fake.cryptoservice.kms.aliyuncs.com',
+        kmsCaFileContent: CA_PEM,
+      }));
+      await (kms as any).ensureClient();
+      assert(getConfig().ca === CA_PEM,
+        'the CA must reach openapi-core Config.ca, otherwise the dedicated gateway TLS handshake cannot be verified');
+    });
+
+    it('should read the CA from kmsCaFilePath when no inline content is given', async () => {
+      const caPath = await writeCaFile('ca.pem', CA_PEM);
+      const getConfig = captureKmsConfig();
+      const kms = new AliyunKmsClient(createDefaultConfiguration({
+        kmsEndpoint: 'kst-fake.cryptoservice.kms.aliyuncs.com',
+        kmsCaFilePath: caPath,
+      }));
+      await (kms as any).ensureClient();
+      assert(getConfig().ca === CA_PEM, 'kmsCaFilePath must be read from disk and forwarded as Config.ca');
+    });
+
+    it('should prefer kmsCaFileContent over kmsCaFilePath', async () => {
+      const caPath = await writeCaFile('other.pem', '-----BEGIN CERTIFICATE-----\nFROM_FILE\n-----END CERTIFICATE-----\n');
+      const getConfig = captureKmsConfig();
+      const kms = new AliyunKmsClient(createDefaultConfiguration({
+        kmsCaFileContent: CA_PEM,
+        kmsCaFilePath: caPath,
+      }));
+      await (kms as any).ensureClient();
+      assert(getConfig().ca === CA_PEM,
+        'inline content must win so an operator can override the file without touching disk');
+    });
+
+    it('should leave Config.ca unset when no CA option is given', async () => {
+      const getConfig = captureKmsConfig();
+      const kms = new AliyunKmsClient(createDefaultConfiguration({ kmsRegionId: 'cn-hangzhou' }));
+      await (kms as any).ensureClient();
+      assert(getConfig().ca === undefined,
+        'an empty-string ca would be forwarded to node https as ca:"" and break the public-gateway handshake');
+    });
+
+    it('should name the offending option when kmsCaFilePath cannot be read', async () => {
+      captureKmsConfig();
+      const kms = new AliyunKmsClient(createDefaultConfiguration({
+        kmsCaFilePath: path.join(cacheDir, 'ca', 'missing.pem'),
+      }));
+      let capturedError;
+      try {
+        await (kms as any).ensureClient();
+      } catch (err) {
+        capturedError = err;
+      }
+      assert(capturedError && /kmsCaFilePath/.test(capturedError.message),
+        'a missing CA file must be reported as such instead of surfacing later as a TLS verification failure');
+    });
+
+    it('should reject ClientKey options without a kmsClientFactory rather than ignore them', async () => {
+      captureKmsConfig();
+      const kms = new AliyunKmsClient(createDefaultConfiguration({
+        kmsClientKeyContent: '{"KeyId":"fake","PrivateKeyData":"fake"}',
+        kmsPassword: 'fake',
+      }));
+      let capturedError;
+      try {
+        await (kms as any).ensureClient();
+      } catch (err) {
+        capturedError = err;
+      }
+      assert(capturedError && /kmsClientFactory/.test(capturedError.message),
+        'the built-in client cannot speak the DKMS ClientKey protocol; silently ignoring it yields an opaque gateway auth failure');
     });
   });
 
@@ -688,6 +788,29 @@ describe('test/cipher.test.ts', () => {
       client.close();
       assert(kms.closeCalls === 1, 'DataClient.close() must cascade to cipher.close()');
     });
+
+    it('should fail loudly rather than leak a KMS client when a cipher operation runs after close()', async () => {
+      // close() releases the client but does not null the reference, so a late push notification
+      // arriving after shutdown still reaches getKmsClient(). Lazily building a fresh client there
+      // would leak a connection pool that nothing will ever close again, and reusing the released
+      // one fails opaquely somewhere inside the transport. A clear lifecycle error beats either,
+      // and it lands in the same `error` channel the callers already use for a KMS outage.
+      let factoryCalls = 0;
+      const cipher = newCipher({
+        kmsClientFactory: () => { factoryCalls++; return new FakeKmsClient(); },
+      });
+      cipher.close();
+
+      let capturedError: any;
+      try {
+        await cipher.decryptIfNeeded('cipher-myapp', 'blob-from-server');
+      } catch (err) {
+        capturedError = err;
+      }
+      assert(factoryCalls === 0, 'a cipher operation after close() must not rebuild the KMS client');
+      assert(capturedError instanceof Error, 'use after close() must surface a real Error, not undefined');
+      assert(/closed/.test(capturedError.message), 'the error must name the lifecycle problem');
+    });
   });
 
   describe('ConfigCipher KMS client factory (ClientKey/DKMS seam)', () => {
@@ -704,7 +827,8 @@ describe('test/cipher.test.ts', () => {
 
       assert(factoryCalls === 1, 'kmsClientFactory must build the client exactly once');
       assert(kms.encryptCalls.length === 1, 'the factory-built client must perform the KMS call');
-      assert(kms.encryptCalls[0].plaintext === Buffer.from('token=abc', 'utf8').toString('base64'));
+      assert(kms.encryptCalls[0].plaintext === 'token=abc',
+        'the factory-built client must receive the raw config text on the direct path');
     });
 
     it('should hand the configuration to kmsClientFactory so ClientKey/DKMS options are readable', async () => {
@@ -823,6 +947,8 @@ describe('test/cipher.test.ts', () => {
     it('should keep the plaintext path returning the raw body without requesting headers', async () => {
       const client = createCipherClient(new FakeKmsClient());
       let capturedOptions: any;
+      const deletedKeys: string[] = [];
+      mm(client.snapshot, 'delete', async (key: string) => { deletedKeys.push(key); });
       mm(client.httpAgent, 'request', async (routePath, options) => {
         capturedOptions = options;
         return 'plain-body';
@@ -830,6 +956,10 @@ describe('test/cipher.test.ts', () => {
       const content = await client.getConfig('plain-data-id', 'DEFAULT_GROUP');
       assert(content === 'plain-body');
       assert(capturedOptions.withHeaders === false, 'non-cipher reads must not change existing behavior');
+      // A non-cipher dataId can never have an edk snapshot under its own key, so the read has no
+      // business entering the 'edk/' namespace -- otherwise every plaintext getConfig pays a
+      // pointless rimraf syscall on the hot path.
+      assert(deletedKeys.length === 0, 'plaintext reads must not touch the edk snapshot namespace');
     });
 
     it('should encrypt on publish and carry encryptedDataKey as a form param', async () => {
