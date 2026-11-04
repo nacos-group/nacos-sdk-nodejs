@@ -1038,26 +1038,25 @@ describe('test/local_cache.test.ts', () => {
     });
 
     describe('KMS cipher snapshot pairing (gRPC)', () => {
-      // ---- KMS cipher：content 快照与 EDK 快照的并发成对性（共享快照锁保证）----
-      // 正确性由 #154 的 readConfigWithFailover 共享 withSnapshotLock 提供，KMS 的 EDK
-      // 双写/双删纳入同一临界区。用一次性阻断“首个 EDK 写入”制造交叉窗口作为回归保护。
+      // ---- KMS cipher：密文与 EDK 作为单条快照记录（共享快照锁保证）----
+      // 正确性由 #154 的 readConfigWithFailover 共享 withSnapshotLock 提供；
+      // 用一次性阻断“首次写入”制造交叉窗口作为回归保护，确保磁盘上永远是完整版本。
 
-      it('KMS: concurrent same-key reads keep the content/EDK snapshot pair matched (never crossed)', async () => {
+      it('KMS: concurrent same-key reads persist one complete cipher snapshot record (never crossed)', async () => {
         const client = createGrpcClient();
         const dataId = 'cipher-kms-aes-128-pair-grpc';
         const group = 'fo-group';
         const contentKey = (client as any)._getSnapshotKey(dataId, group);
-        const edkKey = (client as any)._getEncryptedDataKeySnapshotKey(dataId, group);
         const store = new Map<string, string>();
-        const edkGate = deferred<void>();
-        let edkSaves = 0;
+        const writeGate = deferred<void>();
+        let writes = 0;
         mm((client as any).snapshot, 'get', async (key: string) => (store.has(key) ? store.get(key) : null));
         mm((client as any).snapshot, 'getFailover', async () => null);
         mm((client as any).snapshot, 'getFailoverMtime', async () => null);
         mm((client as any).snapshot, 'delete', async (key: string) => { store.delete(key); });
         mm((client as any).snapshot, 'save', async (key: string, value: string) => {
-          // 阻塞第一个 EDK 写入，若无锁则第二个读会在此窗口写入并造成错配
-          if (key === edkKey) { edkSaves++; if (edkSaves === 1) { await edkGate.promise; } }
+          // 阻塞第一次写入，若无锁则第二个读会在此窗口提交并造成交错
+          if (key === contentKey) { writes++; if (writes === 1) { await writeGate.promise; } }
           if (!value) { store.delete(key); } else { store.set(key, value); }
         });
         // 两对自洽的（content, encryptedDataKey）：v1 配 edk-1，v2 配 edk-2
@@ -1072,28 +1071,25 @@ describe('test/local_cache.test.ts', () => {
         await flush();
         const b = (client as any)._getConfigWithCache(dataId, group);
         await flush();
-        edkGate.resolve();
+        writeGate.resolve();
         await Promise.all([ a, b ]);
         await flush();
 
-        const finalContent = store.get(contentKey);
-        const finalEdk = store.get(edkKey);
-        // 落盘的 content 与 edk 必须成对：要么 (v1, edk-1)，要么 (v2, edk-2)，绝不错配
-        const matched = (finalContent === 'cipher-v1' && finalEdk === 'edk-1') ||
-                        (finalContent === 'cipher-v2' && finalEdk === 'edk-2');
+        // 落盘的记录必须自洽：要么 (v1, edk-1)，要么 (v2, edk-2)，绝不错配
+        const stored = JSON.parse(store.get(contentKey)!);
+        const matched = (stored.content === 'cipher-v1' && stored.encryptedDataKey === 'edk-1') ||
+                        (stored.content === 'cipher-v2' && stored.encryptedDataKey === 'edk-2');
         assert(matched === true);
       });
 
-      it('KMS: concurrent get and remove leave neither content nor EDK snapshot', async () => {
+      it('KMS: concurrent get and remove leave no snapshot record', async () => {
         const client = createGrpcClient();
         const dataId = 'cipher-kms-aes-128-rmpair-grpc';
         const group = 'fo-group';
         const contentKey = (client as any)._getSnapshotKey(dataId, group);
-        const edkKey = (client as any)._getEncryptedDataKeySnapshotKey(dataId, group);
         const store = new Map<string, string>();
-        // 预置一对旧快照；get 在途、remove 先完成后，二者都不应残留或被复活
-        store.set(contentKey, 'old-cipher');
-        store.set(edkKey, 'old-edk');
+        // 预置一条旧快照；get 在途、remove 先完成后，不应残留或被复活
+        store.set(contentKey, JSON.stringify({ v: 1, content: 'old-cipher', encryptedDataKey: 'old-edk' }));
         mm((client as any).snapshot, 'get', async (key: string) => (store.has(key) ? store.get(key) : null));
         mm((client as any).snapshot, 'getFailover', async () => null);
         mm((client as any).snapshot, 'getFailoverMtime', async () => null);
@@ -1114,8 +1110,7 @@ describe('test/local_cache.test.ts', () => {
         await Promise.all([ getP, removeP ]);
         await flush();
 
-        assert(store.has(contentKey) === false, 'content snapshot must not survive remove');
-        assert(store.has(edkKey) === false, 'EDK snapshot must not survive remove');
+        assert(store.has(contentKey) === false, 'snapshot record must not survive remove');
       });
     });
   });

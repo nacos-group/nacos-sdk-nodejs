@@ -472,11 +472,11 @@ Behavior notes (aligned with the Java MSE client):
 - Caches, snapshots, md5 and long-poll/probe comparisons all operate on **ciphertext**; decryption happens only at user boundaries (`getConfig`, listeners, change notifications).
 - `publishConfigCas` is therefore not usable for a read-modify-write cycle on a `cipher-` dataId: the server compares `casMd5` against the ciphertext, but no public API hands you that ciphertext (`getConfig` and listeners both return decrypted text), so there is no md5 you can pass that would match. This is inherent to client-side encryption, not specific to this SDK — the Java client has the same limitation. Publish without CAS, or use a plaintext dataId when you need CAS.
 - The AES payload is always **UTF-8**, whatever `defaultEncoding` is set to. That option describes how HTTP response bodies are decoded off the wire; the ciphertext format is shared with the Java / Go / Python clients, which all encrypt UTF-8 bytes.
-- Snapshots persist the ciphertext plus a parallel `edk/` entry holding the `encryptedDataKey`, so disaster recovery keeps working; both are removed together on `remove` / not-found.
+- Snapshots persist the ciphertext and its `encryptedDataKey` as one **single record** written atomically, so a partial or interrupted write never leaves a mismatched ciphertext/key pair behind and disaster recovery keeps working; the record is removed on `remove` / not-found.
 - Failover files (`cacheDir/failover/...`) are user-maintained **plaintext** by contract and are never sent to KMS — they can be used as an emergency override for a `cipher-` dataId.
 - Publishing a `cipher-` config schedules best-effort CMK **deletion protection** (deduplicated per key, never blocks or fails the publish).
 - KMS calls carry per-request timeouts within an overall retry budget (3 attempts / ~3s by default), so a hung or throttling gateway cannot stall config operations.
-- A decrypt failure at read time surfaces via the client `error` event instead of handing untrusted content to listeners.
+- A decrypt failure at read time surfaces via the client `error` event instead of handing untrusted content to listeners. For listener notifications the failed delivery is kept as pending work and retried with bounded backoff, so it lands automatically once KMS recovers — no server-side config change needed.
 - `close()` cascades to the cipher and releases an injected `kmsClient` (idempotent).
 
 Reaching a **dedicated KMS instance** (`<instance-id>.cryptoservice.kms.aliyuncs.com`) depends on which identity you authenticate with.

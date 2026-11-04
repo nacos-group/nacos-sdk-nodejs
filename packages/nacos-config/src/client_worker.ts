@@ -42,6 +42,13 @@ export class ClientWorker extends Base implements IClientWorker {
   private isLongPulling = false;
   private subscriptions = new Map();
   private cipher: ConfigCipher;
+  /** 同一 key 的通知串行链：保证解密慢的旧版本不会晚于新版本回调（保持拉取顺序）。 */
+  private deliveryChains = new Map<string, Promise<void>>();
+  /** 解密失败后的待投递重试定时器；有界退避，成功投递或退订/关闭时清除。 */
+  private deliveryRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** 重试退避窗口（测试可覆写以缩短等待）。 */
+  protected deliveryRetryBaseMs = 1000;
+  protected deliveryRetryMaxMs = 30000;
   protected loggerDomain = 'Nacos';
   private debugPrefix = this.loggerDomain.toLowerCase();
   private debug = require('debug')(`${this.debugPrefix}:${process.pid}:ins-${this.uuid}:client_worker`);
@@ -99,6 +106,11 @@ export class ClientWorker extends Base implements IClientWorker {
     this.isClose = true;
     this.removeAllListeners();
     this.subscriptions.clear();
+    for (const timer of this.deliveryRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.deliveryRetryTimers.clear();
+    this.deliveryChains.clear();
     if (this.cipher) {
       // Cascade so an injected KMS client is released (HTTP mode owns the cipher here).
       this.cipher.close();
@@ -138,14 +150,8 @@ export class ClientWorker extends Base implements IClientWorker {
         }
       })();
     } else if (!is.nullOrUndefined(item.md5)) {
-      // 用户边界：缓存中为密文时先解密再回调监听器
-      process.nextTick(async () => {
-        try {
-          listener(await this.cipher.decryptIfNeeded(item.dataId, item.content, item.encryptedDataKey, item.isFailover));
-        } catch (err) {
-          this._error(err);
-        }
-      });
+      // 用户边界：缓存中为密文时先解密再回调监听器；经由同一 key 的投递链保持顺序
+      this.enqueueDelivery(key, item, [ listener ]);
     }
     return this;
   }
@@ -188,15 +194,109 @@ export class ClientWorker extends Base implements IClientWorker {
         // 异步化，避免处理逻辑异常影响到 nacos 内部
         // 这里将获取的数据直接事件的方式返回给 subscribe 一开始监听的地方
         this.debug('get new data and callback to listener', item);
-        setImmediate(async () => {
-          try {
-            // 用户边界：密文解密后再回调监听器；failover 明文直接透传不解密
-            this.emit(key, await this.cipher.decryptIfNeeded(item.dataId, content, encryptedDataKey, isFailover));
-          } catch (err) {
-            this._error(err);
-          }
-        });
+        this.enqueueDelivery(key, item);
       }
+    }
+  }
+
+  /**
+   * 把通知排进该 key 的串行投递链。
+   * 解密是异步的：若每次拉取都各自 fire-and-forget，先到的旧版本可能在 KMS 慢响应后
+   * 晚于新版本回调，应用最终停在过期值，而 item.md5 已指向新版本，下一轮长轮询也不会纠正。
+   * 入链时对内容做快照，避免排队期间 item 被后续拉取改写。
+   * @param listeners 仅投递给指定监听器（订阅时补发缓存值）；省略则广播给该 key 的全部监听器
+   */
+  private enqueueDelivery(key: string, item: any, listeners?: Function[]): Promise<void> {
+    this.clearDeliveryRetry(key);
+    const snapshot = {
+      md5: item.md5,
+      content: item.content,
+      encryptedDataKey: item.encryptedDataKey,
+      isFailover: item.isFailover,
+    };
+    const prev = this.deliveryChains.get(key) || Promise.resolve();
+    const run = prev.then(() => (listeners
+      ? this.deliverToListeners(key, item, snapshot, listeners)
+      : this.deliverToSubscribers(key, item, snapshot)));
+    // 链本身不因单次投递失败中断
+    const settled = run.catch(() => {});
+    this.deliveryChains.set(key, settled);
+    settled.then(() => {
+      if (this.deliveryChains.get(key) === settled) {
+        this.deliveryChains.delete(key);
+      }
+    });
+    return run;
+  }
+
+  /** 仅向指定监听器补发当前明文（新订阅者拿缓存值），失败上报但不重试。 */
+  private async deliverToListeners(key: string, item: any, snapshot: any, listeners: Function[]): Promise<void> {
+    try {
+      const plain = await this.cipher.decryptIfNeeded(item.dataId, snapshot.content, snapshot.encryptedDataKey, snapshot.isFailover);
+      if (this.isClose || this.subscriptions.get(key) !== item) {
+        return;
+      }
+      for (const listener of listeners) {
+        if (this.listeners(key).indexOf(listener) >= 0) {
+          listener(plain);
+        }
+      }
+    } catch (err) {
+      this._error(err);
+    }
+  }
+
+  /** 向该 key 的全部监听器广播内容；解密失败时保留为待投递工作并重试。 */
+  private async deliverToSubscribers(key: string, item: any, snapshot: any): Promise<void> {
+    if (snapshot.md5 === null || item.deliveredMd5 === snapshot.md5) {
+      return;
+    }
+    try {
+      const plain = await this.cipher.decryptIfNeeded(item.dataId, snapshot.content, snapshot.encryptedDataKey, snapshot.isFailover);
+      if (this.isClose || this.subscriptions.get(key) !== item) {
+        return;
+      }
+      item.deliveredMd5 = snapshot.md5;
+      item.deliveryRetryAttempts = 0;
+      this.emit(key, plain);
+    } catch (err) {
+      this._error(err);
+      if (!this.isClose && this.subscriptions.get(key) === item) {
+        this.scheduleDeliveryRetry(key, item);
+      }
+    }
+  }
+
+  /**
+   * 解密失败的通知留作待投递工作，按有界指数退避重试已拉取到的内容。
+   * md5 已更新为密文版本，长轮询不会再探到这条配置；不重试就等于 KMS 恢复后永久丢值。
+   */
+  private scheduleDeliveryRetry(key: string, item: any): void {
+    if (this.deliveryRetryTimers.has(key)) {
+      return;
+    }
+    item.deliveryRetryAttempts = (item.deliveryRetryAttempts || 0) + 1;
+    const delayMs = Math.min(
+      this.deliveryRetryBaseMs * Math.pow(2, item.deliveryRetryAttempts - 1),
+      this.deliveryRetryMaxMs);
+    const timer = setTimeout(() => {
+      this.deliveryRetryTimers.delete(key);
+      if (this.isClose || this.subscriptions.get(key) !== item) {
+        return;
+      }
+      this.enqueueDelivery(key, item);
+    }, delayMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    this.deliveryRetryTimers.set(key, timer);
+  }
+
+  private clearDeliveryRetry(key: string): void {
+    const timer = this.deliveryRetryTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.deliveryRetryTimers.delete(key);
     }
   }
 
@@ -381,6 +481,7 @@ export class ClientWorker extends Base implements IClientWorker {
     // 没有人订阅了，从长轮询里拿掉
     if (this.listeners(key).length === 0) {
       this.subscriptions.delete(key);
+      this.clearDeliveryRetry(key);
     }
     return this;
   }
@@ -463,14 +564,6 @@ export class ClientWorker extends Base implements IClientWorker {
     return null;
   }
 
-  /**
-   * encryptedDataKey 的本地持久化 key，与内容快照（'config/' 前缀）并行的独立命名空间（'edk/' 前缀）。
-   * 仅保存 KMS 加密后的数据密钥，明文数据密钥只在内存、绝不落盘。
-   */
-  private getEncryptedDataKeySnapshotKey(dataId: string, group: string): string {
-    return path.join('edk', this.getSnapshotKeyEncoded(dataId, group));
-  }
-
   /** 从 HTTP 响应头读取 encryptedDataKey（头名大小写不敏感）。 */
   private readEncryptedDataKeyHeader(headers: any): string | undefined {
     if (!headers) {
@@ -499,11 +592,9 @@ export class ClientWorker extends Base implements IClientWorker {
   private async getConfigInner(dataId, group): Promise<ConfigFetchResult> {
     this.debug('calling getConfig, dataId: %s, group: %s', dataId, group);
     const key = this.getSnapshotKeyEncoded(dataId, group);
-    const encryptedDataKeySnapshotKey = this.getEncryptedDataKeySnapshotKey(dataId, group);
     const isCipher = this.cipher.isCipherDataId(dataId);
     const result = await readConfigWithFailover({
       snapshotKey: key,
-      encryptedDataKeySnapshotKey,
       isCipher,
       snapshot: this.snapshot,
       fetchFromServer: async () => {
@@ -530,7 +621,6 @@ export class ClientWorker extends Base implements IClientWorker {
         // 同时清除 encoded 与 legacy 两种表示，避免 legacy 快照被 getSnapshot 迁回后复活已删除配置
         await this.snapshot.delete(key);
         await this.snapshot.delete(this.getSnapshotKeyLegacy(dataId, group));
-        await this.snapshot.delete(encryptedDataKeySnapshotKey);
       },
     });
     // 对外暴露内容与 encryptedDataKey，并保留容灾来源：failover 命中时内容为用户维护的明文，
@@ -636,7 +726,7 @@ export class ClientWorker extends Base implements IClientWorker {
    */
   async remove(dataId, group) {
     const encodedKey = this.getSnapshotKeyEncoded(dataId, group);
-    // 与 getConfig 共用快照锁：远端 remove + 本地清理（content/legacy/edk）串行，避免在途 get 晚到后复活快照
+    // 与 getConfig 共用快照锁：远端 remove + 本地清理（encoded/legacy）串行，避免在途 get 晚到后复活快照
     return await withSnapshotLock(this.snapshot, encodedKey, async () => {
       await this.httpAgent.request(this.apiRoutePath.REMOVE, {
         method: 'DELETE',
@@ -647,10 +737,9 @@ export class ClientWorker extends Base implements IClientWorker {
         },
         dataAsQueryString: true,
       });
-      // 同步清理本地快照（encoded + legacy + edk），避免服务端已删除的配置残留在缓存里复活
+      // 同步清理本地快照（encoded + legacy），避免服务端已删除的配置残留在缓存里复活
       await this.snapshot.delete(this.getSnapshotKeyEncoded(dataId, group));
       await this.snapshot.delete(this.getSnapshotKeyLegacy(dataId, group));
-      await this.snapshot.delete(this.getEncryptedDataKeySnapshotKey(dataId, group));
       return true;
     });
   }

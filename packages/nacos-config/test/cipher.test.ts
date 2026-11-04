@@ -122,7 +122,49 @@ class FailingDecryptKmsClient implements IKmsClient {
   }
 }
 
+/** KMS stand-in whose decrypt fails a configurable number of times before recovering. */
+class FlakyDecryptKmsClient extends FakeKmsClient {
+  failuresRemaining: number;
+  constructor(failures: number) {
+    super();
+    this.failuresRemaining = failures;
+  }
+  async decrypt(ciphertextBlob: string): Promise<string> {
+    if (this.failuresRemaining > 0) {
+      this.failuresRemaining--;
+      this.decryptCalls.push(ciphertextBlob);
+      throw new Error('KMS decrypt failed: simulated outage');
+    }
+    return super.decrypt(ciphertextBlob);
+  }
+}
+
+/** KMS stand-in whose decrypt blocks until the test releases that specific ciphertext blob. */
+class GatedDecryptKmsClient extends FakeKmsClient {
+  gates = new Map<string, Promise<void>>();
+  async decrypt(ciphertextBlob: string): Promise<string> {
+    const gate = this.gates.get(ciphertextBlob);
+    if (gate) {
+      await gate;
+    }
+    return super.decrypt(ciphertextBlob);
+  }
+}
+
 const grpcClients: DataClient[] = [];
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** 登记一个 HTTP 订阅并收集该 key 的回调值。 */
+function attachSubscription(client: ClientWorker, dataId: string, group: string): { key: string; received: string[] } {
+  const key = (client as any).formatKey({ dataId, group });
+  (client as any).subscriptions.set(key, { dataId, group, md5: null, content: null });
+  const received: string[] = [];
+  client.on(key, (content: string) => received.push(content));
+  return { key, received };
+}
 
 /**
  * gRPC DataClient with an injected KMS client and an in-memory snapshot. gRPC is the default
@@ -934,9 +976,9 @@ describe('test/cipher.test.ts', () => {
       assert(await client.getConfig(dataId, group) === plaintext);
 
       const snapshotKey = (client as any).getSnapshotKeyEncoded(dataId, group);
-      const edkKey = (client as any).getEncryptedDataKeySnapshotKey(dataId, group);
-      assert(await client.snapshot.get(snapshotKey) === ciphertext, 'snapshot must store ciphertext, never plaintext');
-      assert(await client.snapshot.get(edkKey) === ciphertextBlob);
+      const persisted = JSON.parse(await client.snapshot.get(snapshotKey));
+      assert(persisted.content === ciphertext, 'snapshot must store ciphertext, never plaintext');
+      assert(persisted.encryptedDataKey === ciphertextBlob, 'ciphertext and its EDK must live in one record');
 
       // Server now fails → getConfigInner falls back to the snapshot and still decrypts.
       mm.restore();
@@ -956,10 +998,10 @@ describe('test/cipher.test.ts', () => {
       const content = await client.getConfig('plain-data-id', 'DEFAULT_GROUP');
       assert(content === 'plain-body');
       assert(capturedOptions.withHeaders === false, 'non-cipher reads must not change existing behavior');
-      // A non-cipher dataId can never have an edk snapshot under its own key, so the read has no
-      // business entering the 'edk/' namespace -- otherwise every plaintext getConfig pays a
-      // pointless rimraf syscall on the hot path.
-      assert(deletedKeys.length === 0, 'plaintext reads must not touch the edk snapshot namespace');
+      // A non-cipher dataId stores raw content only, so a plaintext read has no business
+      // deleting a snapshot record -- otherwise every plaintext getConfig pays a pointless
+      // rimraf syscall on the hot path.
+      assert(deletedKeys.length === 0, 'plaintext reads must not delete snapshot records');
     });
 
     it('should encrypt on publish and carry encryptedDataKey as a form param', async () => {
@@ -998,20 +1040,84 @@ describe('test/cipher.test.ts', () => {
     });
   });
 
-  describe('ClientWorker KMS concurrency (shared snapshot lock)', () => {
-    // 这些确定性并发测试验证：cipher dataId 的内容快照（'config/'）与 EDK 快照（'edk/'）
-    // 必须由共享快照锁串行落盘/删除，保证同 key 并发读/写/remove 下二者永远成对，绝不错配。
-    // 该正确性由 #154 引入的 readConfigWithFailover 共享 withSnapshotLock 临界区提供，
-    // KMS EDK 双写/双删被纳入同一临界区；用一次性阻断“首个 EDK 写入”制造交叉窗口，
-    // 若去掉锁（并发的 content/EDK 写入交错）这些断言会失败（回归保护）。
+  describe('ClientWorker notification delivery (retry & ordering)', () => {
 
-    it('should keep the persisted content/EDK pair matched under concurrent same-key reads', async () => {
+    it('should redeliver after KMS recovers without a server-side config change', async () => {
+      const kms = new FlakyDecryptKmsClient(1);
+      const client = createCipherClient(kms);
+      // 缩短退避窗口，测试无需等待真实的秒级间隔
+      (client as any).deliveryRetryBaseMs = 5;
+      (client as any).deliveryRetryMaxMs = 10;
+      const dataId = 'cipher-kms-aes-128-retry';
+      const group = 'DEFAULT_GROUP';
+      const { received } = attachSubscription(client, dataId, group);
+      const errors: Error[] = [];
+      client.on('error', (err: Error) => errors.push(err));
+
+      const { plaintext: dataKey, ciphertextBlob } = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const ciphertext = aesEcb('secret=v1', dataKey, 'aes-128-ecb');
+      let fetchCalls = 0;
+      mm(client.httpAgent, 'request', async () => {
+        fetchCalls++;
+        return { data: ciphertext, headers: { 'encrypted-data-key': ciphertextBlob } };
+      });
+
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+      assert(received.length === 0, 'undecryptable content must not reach the listener');
+      assert(errors.some(e => /decrypt failed/i.test(e.message)), 'the failure must stay observable');
+
+      await delay(120);
+      assert(fetchCalls === 1, 'the recovery must retry the already-fetched content, not re-fetch it');
+      assert.deepStrictEqual(received, [ 'secret=v1' ], 'the pending notification must be delivered once KMS recovers');
+    });
+
+    it('should deliver per-key notifications in fetch order when an earlier decrypt is slower', async () => {
+      const kms = new GatedDecryptKmsClient();
+      const client = createCipherClient(kms);
+      const dataId = 'cipher-kms-aes-128-order';
+      const group = 'DEFAULT_GROUP';
+      const { received } = attachSubscription(client, dataId, group);
+      client.on('error', () => {});
+
+      const k1 = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const k2 = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const c1 = aesEcb('secret=v1', k1.plaintext, 'aes-128-ecb');
+      const c2 = aesEcb('secret=v2', k2.plaintext, 'aes-128-ecb');
+      const gate = deferred<void>();
+      kms.gates.set(k1.ciphertextBlob, gate.promise);
+
+      let fetchCalls = 0;
+      mm(client.httpAgent, 'request', async () => {
+        fetchCalls++;
+        return fetchCalls === 1
+          ? { data: c1, headers: { 'encrypted-data-key': k1.ciphertextBlob } }
+          : { data: c2, headers: { 'encrypted-data-key': k2.ciphertextBlob } };
+      });
+
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+      assert(received.length === 0, 'the newer notification must not overtake the slower one');
+
+      gate.resolve();
+      await flush(20);
+      assert.deepStrictEqual(received, [ 'secret=v1', 'secret=v2' ], 'notifications must keep fetch order');
+    });
+  });
+
+  describe('ClientWorker KMS concurrency (shared snapshot lock)', () => {
+    // 这些确定性并发测试验证：cipher dataId 的密文与 EDK 作为单条快照记录，必须由
+    // 共享快照锁串行写入/删除，保证同 key 并发读/写/remove 下磁盘上永远是某个完整版本，
+    // 绝不出现 “新密文 + 旧 EDK” 的错配组合。该正确性由 #154 引入的 readConfigWithFailover
+    // 共享 withSnapshotLock 临界区提供；用一次性阻断“首次写入”制造交叉窗口作为回归保护。
+
+    it('should persist one complete cipher record under concurrent same-key reads', async () => {
       const kms = new FakeKmsClient();
       const client = createCipherClient(kms);
       const dataId = 'cipher-kms-aes-128-pair-http';
       const group = 'DEFAULT_GROUP';
       const contentKey = (client as any).getSnapshotKeyEncoded(dataId, group);
-      const edkKey = (client as any).getEncryptedDataKeySnapshotKey(dataId, group);
       // 两对彼此独立且各自自洽的（密文, EDK）：V1 内容用 dataKey1 加密、配 edk1；V2 用 dataKey2、配 edk2
       const k1 = await kms.generateDataKey('alias/acs/mse', 'AES_128');
       const k2 = await kms.generateDataKey('alias/acs/mse', 'AES_128');
@@ -1019,15 +1125,15 @@ describe('test/cipher.test.ts', () => {
       const c2 = aesEcb('secret=v2', k2.plaintext, 'aes-128-ecb');
 
       const store = new Map<string, string>();
-      const edkGate = deferred<void>();
-      let edkSaves = 0;
+      const writeGate = deferred<void>();
+      let writes = 0;
       mm(client.snapshot, 'get', async (key: string) => (store.has(key) ? store.get(key) : null));
       mm(client.snapshot, 'getFailover', async () => null);
       mm(client.snapshot, 'getFailoverMtime', async () => null);
       mm(client.snapshot, 'delete', async (key: string) => { store.delete(key); });
       mm(client.snapshot, 'save', async (key: string, value: string) => {
-        // 阻塞第一个 EDK 写入，制造两个并发读写入交错的窗口
-        if (key === edkKey) { edkSaves++; if (edkSaves === 1) { await edkGate.promise; } }
+        // 阻塞第一次写入，制造两个并发读交错提交的窗口
+        if (key === contentKey) { writes++; if (writes === 1) { await writeGate.promise; } }
         if (!value) { store.delete(key); } else { store.set(key, value); }
       });
       let call = 0;
@@ -1041,17 +1147,16 @@ describe('test/cipher.test.ts', () => {
       await flush();
       const b = client.getConfig(dataId, group);
       await flush();
-      edkGate.resolve();
+      writeGate.resolve();
       const results = await Promise.all([ a, b ]);
 
-      // 快照里的 content 必须能被同一快照里的 edk 正确解密（成对），错配会导致解密失败/乱码
-      const storedContent = store.get(contentKey)!;
-      const storedEdk = store.get(edkKey)!;
+      // 快照里的 content 必须能被同一记录里的 EDK 正确解密（成对），错配会导致解密失败/乱码
+      const stored = JSON.parse(store.get(contentKey)!);
       let decrypted: string | null = null;
       try {
-        const key = Buffer.from(await kms.decrypt(storedEdk), 'base64');
+        const key = Buffer.from(await kms.decrypt(stored.encryptedDataKey), 'base64');
         const decipher = crypto.createDecipheriv('aes-128-ecb', key, null);
-        decrypted = Buffer.concat([ decipher.update(Buffer.from(storedContent, 'base64')), decipher.final() ]).toString('utf8');
+        decrypted = Buffer.concat([ decipher.update(Buffer.from(stored.content, 'base64')), decipher.final() ]).toString('utf8');
       } catch (err) {
         decrypted = null;
       }
@@ -1061,20 +1166,18 @@ describe('test/cipher.test.ts', () => {
       assert(results[1] === 'secret=v1' || results[1] === 'secret=v2');
     });
 
-    it('should leave neither content nor EDK snapshot when a get and remove race', async () => {
+    it('should leave no snapshot record when a get and remove race', async () => {
       const kms = new FakeKmsClient();
       const client = createCipherClient(kms);
       const dataId = 'cipher-kms-aes-128-rmpair-http';
       const group = 'DEFAULT_GROUP';
       const contentKey = (client as any).getSnapshotKeyEncoded(dataId, group);
-      const edkKey = (client as any).getEncryptedDataKeySnapshotKey(dataId, group);
       const k1 = await kms.generateDataKey('alias/acs/mse', 'AES_128');
       const c1 = aesEcb('secret=fresh', k1.plaintext, 'aes-128-ecb');
 
       const store = new Map<string, string>();
-      // 预置一对旧快照，模拟历史缓存；remove 之后二者都不应残留（也不应被在途 get 复活）
-      store.set(contentKey, 'stale-cipher');
-      store.set(edkKey, 'stale-edk');
+      // 预置一条旧快照，模拟历史缓存；remove 之后不应残留（也不应被在途 get 复活）
+      store.set(contentKey, JSON.stringify({ v: 1, content: 'stale-cipher', encryptedDataKey: 'stale-edk' }));
       mm(client.snapshot, 'get', async (key: string) => (store.has(key) ? store.get(key) : null));
       mm(client.snapshot, 'getFailover', async () => null);
       mm(client.snapshot, 'getFailoverMtime', async () => null);
@@ -1096,8 +1199,7 @@ describe('test/cipher.test.ts', () => {
       await Promise.all([ getP, removeP ]);
       await flush();
 
-      assert(store.has(contentKey) === false, 'content snapshot must not survive remove');
-      assert(store.has(edkKey) === false, 'EDK snapshot must not survive remove');
+      assert(store.has(contentKey) === false, 'snapshot record must not survive remove');
     });
   });
 
@@ -1189,6 +1291,87 @@ describe('test/cipher.test.ts', () => {
 
       assert(errors.some(e => /decrypt failed/i.test(e.message)), 'decryption failure on initial subscribe must be observable');
       assert(received.length === 0, 'listener must not be notified with undecryptable content');
+    });
+
+    it('should keep failover state until the recovery content decrypts', async () => {
+      const kms = new FlakyDecryptKmsClient(1);
+      const client = createGrpcCipherClient(kms);
+      const dataId = 'cipher-kms-aes-128-grpc-failover-recovery';
+      const group = 'DEFAULT_GROUP';
+      const key = `${dataId}@@${group}`;
+      const { plaintext: dataKey, ciphertextBlob } = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const ciphertext = aesEcb('server-value', dataKey, 'aes-128-ecb');
+      const received: string[] = [];
+      client.removeAllListeners('error');
+      client.on('error', () => {});
+      (client as any)._grpcSubscribers = new Map([[ key, [ (c: string) => received.push(c) ] ]]);
+      (client as any)._grpcFailoverState = new Map([[ key, {
+        dataId,
+        group,
+        useFailover: true,
+        failoverVersion: 1,
+        content: 'emergency-value',
+        listenerRegistered: true,
+        listenerMd5: '',
+      } ]]);
+      mm((client as any).snapshot, 'getFailoverMtime', async () => null);
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: ciphertext, encryptedDataKey: ciphertextBlob }));
+
+      const state = (client as any)._grpcFailoverState.get(key);
+      await (client as any)._checkGrpcFailoverForKey(key);
+      await flush();
+      assert(state.useFailover === true, 'a failed recovery decrypt must not clear the failover flag');
+      assert(received.length === 0, 'the emergency config must stay until the server value is decryptable');
+
+      await (client as any)._checkGrpcFailoverForKey(key);
+      await flush();
+      assert(state.useFailover === false, 'the flag must be committed together with the decrypted content');
+      assert.deepStrictEqual(received, [ 'server-value' ]);
+    });
+  });
+
+  describe('cipher snapshot atomicity (content + EDK)', () => {
+
+    it('should preserve the previous complete snapshot when a snapshot write fails', async () => {
+      const kms = new FakeKmsClient();
+      const client = createCipherClient(kms);
+      const dataId = 'cipher-kms-aes-128-atomic';
+      const group = 'DEFAULT_GROUP';
+      const k1 = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const k2 = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const c1 = aesEcb('secret=v1', k1.plaintext, 'aes-128-ecb');
+      const c2 = aesEcb('secret=v2', k2.plaintext, 'aes-128-ecb');
+
+      let fetchCalls = 0;
+      mm(client.httpAgent, 'request', async () => {
+        fetchCalls++;
+        return fetchCalls === 1
+          ? { data: c1, headers: { 'encrypted-data-key': k1.ciphertextBlob } }
+          : { data: c2, headers: { 'encrypted-data-key': k2.ciphertextBlob } };
+      });
+      client.on('error', () => {});
+
+      assert(await client.getConfig(dataId, group) === 'secret=v1');
+
+      // 模拟落盘失败（rename 失败）：更新快照期间第一次写入即失败
+      const snapshot = client.snapshot as any;
+      const realSave = snapshot.save.bind(snapshot);
+      let failNext = true;
+      mm(snapshot, 'save', async (snapshotKey: string, value: string) => {
+        if (failNext) {
+          failNext = false;
+          const err: any = new Error('EACCES: simulated snapshot rename failure');
+          err.name = 'SnapshotWriteError';
+          return;
+        }
+        return realSave(snapshotKey, value);
+      });
+
+      assert(await client.getConfig(dataId, group) === 'secret=v2', 'a failed persist must not fail the read itself');
+
+      // 服务端故障 → 快照回退必须是上一个完整版本，而不是 content/EDK 错配的半成品
+      mm(client.httpAgent, 'request', async () => { throw new Error('server down'); });
+      assert(await client.getConfig(dataId, group) === 'secret=v1', 'fallback must read a matched, decryptable pair');
     });
   });
 });

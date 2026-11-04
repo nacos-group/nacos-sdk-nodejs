@@ -400,16 +400,15 @@ export class DataClient extends Base implements BaseClient {
     checkParameters(dataId, group);
     if (this._grpcConfigProxy) {
       const key = this._getSnapshotKey(dataId, group);
-      // 与 getConfig 共用快照锁：远端 remove + 本地清理（content + edk）串行，避免在途 get 晚到后复活快照
+      // 与 getConfig 共用快照锁：远端 remove + 本地清理串行，避免在途 get 晚到后复活快照
       return await withSnapshotLock(this.snapshot, key, async () => {
         const removed = await this._grpcConfigProxy!.remove(dataId, group, this.configuration.get(ClientOptionKeys.NAMESPACE));
         // 仅当服务端确认删除成功（true）才清理本地快照；失败（false）保留快照，避免误删本地容灾数据
         if (removed !== true) {
           return false;
         }
-        // 同步清理本地快照与 encryptedDataKey 缓存，避免服务端已删除的配置残留在缓存里（与 HTTP 模式一致）
+        // 同步清理本地快照，避免服务端已删除的配置残留在缓存里（与 HTTP 模式一致）
         await this.snapshot.delete(key);
-        await this.snapshot.delete(this._getEncryptedDataKeySnapshotKey(dataId, group));
         return removed;
       });
     }
@@ -613,27 +612,17 @@ export class DataClient extends Base implements BaseClient {
   }
 
   /**
-   * encryptedDataKey 的本地持久化 key，与内容快照（'config/' 前缀）并行的独立命名空间
-   * （'edk/' 前缀），与 ClientWorker.getEncryptedDataKeySnapshotKey 保持一致，HTTP / gRPC 共享。
-   */
-  private _getEncryptedDataKeySnapshotKey(dataId: string, group: string): string {
-    return path.join('edk', this._getSnapshotKey(dataId, group));
-  }
-
-  /**
    * gRPC 模式带本地容灾的读取（对齐 Java SDK 读优先级 failover > server > snapshot）：
    * - 用户手工维护的 failover 文件存在时优先返回；
    * - 否则查询服务端，成功后落快照（空/缺失内容由 Snapshot.save 统一按删除处理，等价 Java saveSnapshot(null)）；
    * - 服务端异常时回退本地快照，快照也没有才抛错。
    * 返回原始内容（cipher dataId 为密文）与随行 encryptedDataKey，解密只在用户边界进行；
-   * content/EDK 的读写全部由 readConfigWithFailover 在共享快照锁内串行执行，成对写入 / 成对删除。
+   * 快照读写全部由 readConfigWithFailover 在共享快照锁内串行执行。
    */
   private async _getConfigWithCache(dataId: string, group: string, tenant?: string): Promise<ConfigReadResult> {
     const key = this._getSnapshotKey(dataId, group);
-    const edkKey = this._getEncryptedDataKeySnapshotKey(dataId, group);
     return await readConfigWithFailover({
       snapshotKey: key,
-      encryptedDataKeySnapshotKey: edkKey,
       isCipher: this.cipher.isCipherDataId(dataId),
       snapshot: this.snapshot,
       fetchFromServer: () => this._grpcConfigProxy!.getConfig(dataId, group, tenant),
@@ -641,7 +630,6 @@ export class DataClient extends Base implements BaseClient {
       onServerError: err => this.throwError(err),
       clearSnapshot: async () => {
         await this.snapshot.delete(key);
-        await this.snapshot.delete(edkKey);
       },
     });
   }
@@ -867,13 +855,15 @@ export class DataClient extends Base implements BaseClient {
             return;
           }
           const content = result.content === null ? '' : result.content;
-          state.useFailover = false;
-          state.failoverVersion = null;
-          // 用户边界：切回服务端内容需解密后再对比 / 通知
+          // 用户边界：切回服务端内容需解密后再对比 / 通知。解密失败（KMS 暂不可用）
+          // 时必须保留 failover 状态，否则下一轮 watcher 不再进入恢复分支，监听器会一直
+          // 停留在应急配置上；因此 failover 标记与新内容一起、仅在解密成功后提交。
           const plainContent = await this.cipher.decryptIfNeeded(state.dataId, content, encryptedDataKey);
           if (!this._isGrpcStateActive(key, state)) {
             return;
           }
+          state.useFailover = false;
+          state.failoverVersion = null;
           if (plainContent !== state.content) {
             state.content = plainContent;
             const current = this._grpcSubscribers.get(key) || [];

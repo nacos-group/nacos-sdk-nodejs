@@ -57,9 +57,7 @@ export interface ConfigReadResult {
 export interface DisasterRecoveryHooks {
   /** 内容快照的统一存储 key（各传输自行编码后传入） */
   snapshotKey: string;
-  /** encryptedDataKey 快照的存储 key（与内容快照并行的 'edk/' 命名空间） */
-  encryptedDataKeySnapshotKey: string;
-  /** 是否为 cipher dataId：决定是否持久化/回退 encryptedDataKey */
+  /** 是否为 cipher dataId：决定快照是否按“密文 + EDK”单条记录持久化 */
   isCipher: boolean;
   /** 快照与容灾文件的持久化实现 */
   snapshot: ISnapshot;
@@ -73,24 +71,59 @@ export interface DisasterRecoveryHooks {
   readSnapshotFallback: () => Promise<string | null>;
   /** 服务端异常但命中快照回退时的错误上报（HTTP _error / gRPC throwError） */
   onServerError: (err: Error) => void;
-  /** 清除该 key 的全部本地快照表示（HTTP 含 legacy key + edk，gRPC 含 encoded + edk），用于服务端“配置不存在” */
+  /** 清除该 key 的全部本地快照表示（HTTP 含 legacy key，gRPC 含 encoded），用于服务端“配置不存在” */
   clearSnapshot: () => Promise<void>;
+}
+
+/** cipher dataId 的快照记录：密文与 EDK 必须作为一条记录原子落盘。 */
+export interface CipherSnapshotRecord {
+  content: string;
+  encryptedDataKey?: string;
+}
+
+const CIPHER_SNAPSHOT_VERSION = 1;
+
+/**
+ * 把密文与 EDK 序列化成单条记录，交给 Snapshot.save 一次性 temp+rename 替换。
+ * 分开写两个文件时，第二个写失败或进程中途退出会留下 “新内容 + 旧 EDK” 的错配组合，
+ * 后续服务端故障回退时将无法解密；单条记录保证磁盘上永远只有完整版本。
+ */
+export function encodeCipherSnapshot(content: string, encryptedDataKey?: string): string {
+  return JSON.stringify({ v: CIPHER_SNAPSHOT_VERSION, content, encryptedDataKey });
+}
+
+/**
+ * 解析 cipher 快照记录。非 JSON 内容视为本 PR 早期双文件格式遗留的裸密文：
+ * 没有配对的 EDK 时按密文返回，解密失败会显式上报而不是静默错配。
+ */
+export function decodeCipherSnapshot(raw: string): CipherSnapshotRecord {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && typeof parsed.content === 'string') {
+      return {
+        content: parsed.content,
+        encryptedDataKey: typeof parsed.encryptedDataKey === 'string' ? parsed.encryptedDataKey : undefined,
+      };
+    }
+  } catch (_) {
+    // 非 JSON：交由下面的裸密文回退处理
+  }
+  return { content: raw };
 }
 
 /**
  * 本地容灾读取骨架，对齐 Java SDK 的读优先级：failover > server > snapshot。
  * - failover 是用户手工维护的应急容灾配置，命中则优先返回，按明文处理，不携带 encryptedDataKey；
- * - 服务端异常时回退本地快照（cipher dataId 一并回退 edk 以便解密），快照也没有才抛出原始错误；
- * - 服务端返回“配置不存在”（null）时删除内容快照与 edk，避免故障回退读到过期空内容；
- * - 快照存原始内容（cipher dataId 为密文），encryptedDataKey 单独持久化供离线解密。
+ * - 服务端异常时回退本地快照（cipher dataId 一并回退 EDK 以便解密），快照也没有才抛出原始错误；
+ * - 服务端返回“配置不存在”（null）时删除快照记录，避免故障回退读到过期内容；
+ * - cipher 快照把密文与 EDK 存成单条记录，非 cipher 快照只存原始内容。
  *
- * 整个 failover check → server fetch → fallback 双读 → content/EDK 双写或双删流程
+ * 整个 failover check → server fetch → fallback 读取 → 快照写入/删除流程
  * 全部在共享快照锁（withSnapshotLock，lockKey = cacheDir::snapshotKey）内串行执行，
- * 对齐 Java CacheData synchronized：同一进程内同 key 的并发读/写/remove 不会交错，
- * 因而 content 快照与 edk 快照永远成对写入 / 成对删除，不会产生错配 pair。
+ * 对齐 Java CacheData synchronized：同一进程内同 key 的并发读/写/remove 不会交错。
  */
 export function readConfigWithFailover(hooks: DisasterRecoveryHooks): Promise<ConfigReadResult> {
-  const { snapshotKey, encryptedDataKeySnapshotKey, isCipher, snapshot } = hooks;
+  const { snapshotKey, isCipher, snapshot } = hooks;
   return withSnapshotLock(snapshot, snapshotKey, async () => {
     const failover = await snapshot.getFailover(snapshotKey);
     if (failover !== null) {
@@ -107,35 +140,33 @@ export function readConfigWithFailover(hooks: DisasterRecoveryHooks): Promise<Co
       const cache = await hooks.readSnapshotFallback();
       if (cache !== null) {
         hooks.onServerError(err);
-        // cipher dataId 一并回退 edk 快照，供离线解密；两次读取仍在同一临界区内
-        const cachedDataKey = isCipher ? await snapshot.get(encryptedDataKeySnapshotKey) : null;
+        const record = isCipher ? decodeCipherSnapshot(cache) : { content: cache };
         return {
-          content: cache,
+          content: record.content,
           source: 'snapshot' as ConfigContentSource,
-          encryptedDataKey: cachedDataKey || undefined,
+          encryptedDataKey: record.encryptedDataKey,
         };
       }
       throw err;
     }
 
     if (content === null) {
-      // 服务端配置不存在：清除该 key 的全部本地表示（含 edk），避免残留快照
+      // 服务端配置不存在：清除该 key 的本地表示，避免残留快照
       // 在后续服务端故障时把已删除的配置复活
       await hooks.clearSnapshot();
       return { content: null, source: 'server' as ConfigContentSource };
     }
 
-    // 落原始内容快照（空内容由 Snapshot.save 统一按删除处理）
-    await snapshot.save(snapshotKey, content || '');
-    // encryptedDataKey 单独持久化；cipher 配置本次没带 edk 时清掉旧值，避免与内容错配
-    // （与内容写入同临界区，保证成对）。非 cipher 配置的 key 下从来不会写 edk 快照，
-    // 整段跳过，免得每次明文读取都白付一次 rimraf 系统调用。
+    // 落快照（空内容由 Snapshot.save 统一按删除处理）。cipher 的密文与 EDK 是一条记录，
+    // 单次 temp+rename 替换，不会写出 “新密文 + 旧 EDK” 的错配组合。
     if (isCipher) {
-      if (encryptedDataKey) {
-        await snapshot.save(encryptedDataKeySnapshotKey, encryptedDataKey);
+      if (content) {
+        await snapshot.save(snapshotKey, encodeCipherSnapshot(content, encryptedDataKey));
       } else {
-        await snapshot.delete(encryptedDataKeySnapshotKey);
+        await snapshot.delete(snapshotKey);
       }
+    } else {
+      await snapshot.save(snapshotKey, content || '');
     }
     return { content, source: 'server' as ConfigContentSource, encryptedDataKey };
   });
