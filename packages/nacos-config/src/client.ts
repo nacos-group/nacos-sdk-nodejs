@@ -54,6 +54,11 @@ interface GrpcFailoverState {
   listenerRegistered: boolean;
   // 远端监听注册所需的 md5（服务端原文/密文计算）；注册失败后由 watcher 据此重试 addListener
   listenerMd5: string | null;
+  /**
+   * 已拉取但解密失败的用户可见内容（raw 密文 + EDK），与 content 分开保存：
+   * 服务端已按 listenerMd5 记下这次推送，不会重发，必须在这里保留成待投递工作。
+   */
+  pendingDelivery?: { content: string; encryptedDataKey?: string; attempts: number };
 }
 
 export class DataClient extends Base implements BaseClient {
@@ -72,6 +77,10 @@ export class DataClient extends Base implements BaseClient {
   private _grpcFailoverState: Map<string, GrpcFailoverState> | null;
   private _failoverWatcher: any;
   private _grpcOpQueue: KeyedAsyncQueue | null;
+  private _grpcDeliveryRetryTimers: Map<string, ReturnType<typeof setTimeout>>;
+  /** 解密失败重试的有界退避窗口（测试可覆写以缩短等待）。 */
+  protected grpcDeliveryRetryBaseMs: number;
+  protected grpcDeliveryRetryMaxMs: number;
   private _closed: boolean;
   private _failoverChecking: boolean;
 
@@ -91,6 +100,9 @@ export class DataClient extends Base implements BaseClient {
     this._grpcFailoverState = null;
     this._failoverWatcher = null;
     this._grpcOpQueue = null;
+    this._grpcDeliveryRetryTimers = new Map();
+    this.grpcDeliveryRetryBaseMs = 1000;
+    this.grpcDeliveryRetryMaxMs = 30000;
     this._closed = false;
     this._failoverChecking = false;
 
@@ -269,6 +281,7 @@ export class DataClient extends Base implements BaseClient {
           if (listeners.length === 0) {
             this._grpcSubscribers.delete(key);
             if (this._grpcFailoverState) { this._grpcFailoverState.delete(key); }
+            this._clearGrpcDeliveryRetry(key);
             // 同步失活已完成；远端 remove 入队，排在旧 init 的 add 之后、新 subscribe 的 init 之前
             if (this._grpcOpQueue) {
               this._grpcOpQueue.run(key, () => this._grpcConfigProxy!.removeListener(dataId, group)).catch(() => {});
@@ -277,6 +290,7 @@ export class DataClient extends Base implements BaseClient {
         } else {
           this._grpcSubscribers.delete(key);
           if (this._grpcFailoverState) { this._grpcFailoverState.delete(key); }
+          this._clearGrpcDeliveryRetry(key);
           // 远端 remove 入队，保持同 key add/remove FIFO 顺序
           if (this._grpcOpQueue) {
             this._grpcOpQueue.run(key, () => this._grpcConfigProxy!.removeListener(dataId, group)).catch(() => {});
@@ -501,6 +515,10 @@ export class DataClient extends Base implements BaseClient {
     }
     this._closed = true;
     this._stopFailoverWatcher();
+    for (const timer of this._grpcDeliveryRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this._grpcDeliveryRetryTimers.clear();
     if (this._grpcSubscribers) {
       this._grpcSubscribers.clear();
     }
@@ -675,8 +693,13 @@ export class DataClient extends Base implements BaseClient {
         plainContent = await this.cipher.decryptIfNeeded(evt.dataId, rawContent, encryptedDataKey, isFailover);
       } catch (err) {
         // 解密失败（KMS 不可用 / content 与 edk 错配）：经 throwError 上报为 'error' 事件，
-        // 避免被外层 op queue 的 .catch(() => {}) 静默吞掉；不回调监听器以免下发不可信内容
+        // 避免被外层 op queue 的 .catch(() => {}) 静默吞掉；不回调监听器以免下发不可信内容。
+        // 服务端已按 listenerMd5 记下这次推送、不会再发，因此把内容留成待投递工作重试。
         this.throwError(err);
+        if (this._isGrpcStateActive(key, state) && !state.useFailover) {
+          state.pendingDelivery = { content: rawContent, encryptedDataKey, attempts: 0 };
+          this._scheduleGrpcDeliveryRetry(key, state);
+        }
         return;
       }
       if (!this._isGrpcStateActive(key, state) || state.useFailover) {
@@ -686,6 +709,8 @@ export class DataClient extends Base implements BaseClient {
       if (!current || current.length === 0) {
         return;
       }
+      this._clearGrpcDeliveryRetry(key);
+      state.pendingDelivery = undefined;
       state.content = plainContent;
       this._notifyGrpcListeners(current, plainContent);
     }).catch(() => {});
@@ -721,8 +746,12 @@ export class DataClient extends Base implements BaseClient {
       plainContent = await this.cipher.decryptIfNeeded(state.dataId, rawContent, encryptedDataKey, isFailover);
     } catch (err) {
       // 解密失败（KMS 不可用 / content 与 edk 错配）：经 throwError 上报为可观测错误，
-      // 不用不可信内容回调监听器；仍继续注册远端监听，待服务端 / KMS 恢复后经推送重试
+      // 不用不可信内容回调监听器；内容留成待投递工作重试，避免订阅者一直拿不到初值
       this.throwError(err);
+      if (this._isGrpcStateActive(key, state)) {
+        state.pendingDelivery = { content: rawContent, encryptedDataKey, attempts: 0 };
+        this._scheduleGrpcDeliveryRetry(key, state);
+      }
     }
     if (!this._isGrpcStateActive(key, state) || !this._hasGrpcListener(key, listener)) {
       return;
@@ -745,6 +774,9 @@ export class DataClient extends Base implements BaseClient {
       if (failoverContent !== null) {
         state.useFailover = true;
         state.failoverVersion = mtime;
+        // 容灾内容优先，之前未解密成功的服务端推送不再下发
+        state.pendingDelivery = undefined;
+        this._clearGrpcDeliveryRetry(key);
         if (failoverContent !== state.content) {
           state.content = failoverContent;
           this._notifyGrpcListeners([ listener ], failoverContent);
@@ -779,6 +811,80 @@ export class DataClient extends Base implements BaseClient {
     }
     const listeners = this._grpcSubscribers.get(key);
     return !!listeners && listeners.indexOf(listener) >= 0;
+  }
+
+  /**
+   * 解密失败的 gRPC 推送内容留作待投递工作，按有界指数退避重试。
+   * 服务端已按 listenerMd5 记下这次推送、不会再发；不重试就等于 KMS 恢复后永久丢值。
+   * 重试经由 per-key operation queue，与推送和容灾检查保持同一串行顺序。
+   */
+  private _scheduleGrpcDeliveryRetry(key: string, state: GrpcFailoverState): void {
+    if (this._grpcDeliveryRetryTimers.has(key) || !state.pendingDelivery) {
+      return;
+    }
+    state.pendingDelivery.attempts += 1;
+    const delayMs = Math.min(
+      this.grpcDeliveryRetryBaseMs * Math.pow(2, state.pendingDelivery.attempts - 1),
+      this.grpcDeliveryRetryMaxMs);
+    const timer = setTimeout(() => {
+      this._grpcDeliveryRetryTimers.delete(key);
+      if (this._closed || !this._grpcOpQueue) {
+        return;
+      }
+      this._grpcOpQueue.run(key, () => this._retryGrpcDelivery(key, state)).catch(() => {});
+    }, delayMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    this._grpcDeliveryRetryTimers.set(key, timer);
+  }
+
+  private _clearGrpcDeliveryRetry(key: string): void {
+    const timer = this._grpcDeliveryRetryTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this._grpcDeliveryRetryTimers.delete(key);
+    }
+  }
+
+  /** 重放已拉取但尚未成功解密的推送内容；成功后才提交 content 并通知监听器。 */
+  private async _retryGrpcDelivery(key: string, state: GrpcFailoverState): Promise<void> {
+    if (!this._isGrpcStateActive(key, state)) {
+      return;
+    }
+    const pending = state.pendingDelivery;
+    if (!pending) {
+      return;
+    }
+    // 已切到容灾内容（local config wins）：服务端内容不再下发，丢弃待投递工作
+    if (state.useFailover) {
+      state.pendingDelivery = undefined;
+      return;
+    }
+    const listeners = this._grpcSubscribers ? this._grpcSubscribers.get(key) : undefined;
+    if (!listeners || listeners.length === 0) {
+      state.pendingDelivery = undefined;
+      return;
+    }
+    let plainContent: string;
+    try {
+      plainContent = await this.cipher.decryptIfNeeded(state.dataId, pending.content, pending.encryptedDataKey);
+    } catch (err) {
+      this.throwError(err);
+      if (this._isGrpcStateActive(key, state) && !state.useFailover) {
+        this._scheduleGrpcDeliveryRetry(key, state);
+      }
+      return;
+    }
+    if (!this._isGrpcStateActive(key, state) || state.useFailover) {
+      return;
+    }
+    state.pendingDelivery = undefined;
+    if (plainContent === state.content) {
+      return;
+    }
+    state.content = plainContent;
+    this._notifyGrpcListeners(this._grpcSubscribers ? this._grpcSubscribers.get(key) || [] : [], plainContent);
   }
 
   /**
@@ -864,6 +970,9 @@ export class DataClient extends Base implements BaseClient {
           }
           state.useFailover = false;
           state.failoverVersion = null;
+          // 服务端内容已成功下发，之前失败的推送工作不再需要
+          state.pendingDelivery = undefined;
+          this._clearGrpcDeliveryRetry(key);
           if (plainContent !== state.content) {
             state.content = plainContent;
             const current = this._grpcSubscribers.get(key) || [];
@@ -886,6 +995,9 @@ export class DataClient extends Base implements BaseClient {
       }
       state.useFailover = true;
       state.failoverVersion = mtime;
+      // 容灾内容优先，之前未解密成功的服务端推送不再下发
+      state.pendingDelivery = undefined;
+      this._clearGrpcDeliveryRetry(key);
       if (content !== state.content) {
         state.content = content;
         const current = this._grpcSubscribers.get(key) || [];

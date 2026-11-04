@@ -150,8 +150,12 @@ export class ClientWorker extends Base implements IClientWorker {
         }
       })();
     } else if (!is.nullOrUndefined(item.md5)) {
-      // 用户边界：缓存中为密文时先解密再回调监听器；经由同一 key 的投递链保持顺序
-      this.enqueueDelivery(key, item, [ listener ]);
+      // 用户边界：缓存中为密文时先解密再回调监听器；经由同一 key 的投递链保持顺序。
+      // 已有失败投递在等待重试时不再单独补发：重试会广播给所有监听器（含刚加入的这个），
+      // 这里再发一次既重复，又会把待重试的工作清掉，让老监听器永远停在旧值。
+      if (!this.deliveryRetryTimers.has(key)) {
+        this.enqueueDelivery(key, item, [ listener ]);
+      }
     }
     return this;
   }
@@ -207,7 +211,10 @@ export class ClientWorker extends Base implements IClientWorker {
    * @param listeners 仅投递给指定监听器（订阅时补发缓存值）；省略则广播给该 key 的全部监听器
    */
   private enqueueDelivery(key: string, item: any, listeners?: Function[]): Promise<void> {
-    this.clearDeliveryRetry(key);
+    if (!listeners) {
+      // 新的广播取代旧的待重试投递；监听器补发不得清掉重试（见 subscribe）
+      this.clearDeliveryRetry(key);
+    }
     const snapshot = {
       md5: item.md5,
       content: item.content,
