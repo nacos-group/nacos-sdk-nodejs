@@ -20,7 +20,7 @@ import { getMD5String } from './utils';
 import * as path from 'path';
 import * as is from 'is-type-of';
 import { HttpAgent } from './http_agent';
-import { ConfigCipher, createConfigCipher, ENCRYPTED_DATA_KEY_HEADER, ENCRYPTED_DATA_KEY_PARAM } from './cipher';
+import { ConfigCipher, createConfigCipher, ENCRYPTED_DATA_KEY_HEADER, ENCRYPTED_DATA_KEY_PARAM, isCipherDataKeyMissingError } from './cipher';
 import { readConfigWithFailover, withSnapshotLock, ConfigContentSource } from './disaster_recovery';
 
 const Base = require('sdk-base');
@@ -269,7 +269,9 @@ export class ClientWorker extends Base implements IClientWorker {
       plain = await this.cipher.decryptIfNeeded(item.dataId, snapshot.content, snapshot.encryptedDataKey, snapshot.isFailover);
     } catch (err) {
       this._error(err);
-      if (!this.isClose && this.subscriptions.get(key) === item) {
+      // 缺 encryptedDataKey 的响应无法靠重试同一份内容恢复（Java 同样直接报错），
+      // 只登记失败等下一次服务端推送 / sync 带来成对的密文与 key。
+      if (!isCipherDataKeyMissingError(err) && !this.isClose && this.subscriptions.get(key) === item) {
         this.pendingDeliveries.add(key);
         this.scheduleDeliveryRetry(key, item);
       }

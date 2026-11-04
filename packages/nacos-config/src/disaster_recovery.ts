@@ -94,6 +94,7 @@ export function encodeCipherSnapshot(content: string, encryptedDataKey?: string)
 
 /**
  * 解析 cipher 快照记录。非 JSON 内容视为旧双文件格式遗留的裸密文：按密文返回，不虚构 EDK。
+ * 这类记录缺 encryptedDataKey，用户边界解密时会按缺 key 报错，而不是把密文当明文下发。
  */
 export function decodeCipherSnapshot(raw: string): CipherSnapshotRecord {
   try {

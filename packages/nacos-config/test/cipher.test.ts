@@ -339,9 +339,19 @@ describe('test/cipher.test.ts', () => {
     it('should return content as-is when encryptedDataKey is absent (plaintext failover)', async () => {
       const kms = new FakeKmsClient();
       const cipher = newCipher({}, kms);
-      const decrypted = await cipher.decryptIfNeeded('cipher-kms-aes-128-fo', 'plain-failover-value');
+      const decrypted = await cipher.decryptIfNeeded('cipher-kms-aes-128-fo', 'plain-failover-value', undefined, true);
       assert(decrypted === 'plain-failover-value');
       assert(kms.decryptCalls.length === 0);
+    });
+
+    it('should throw rather than return ciphertext when an envelope config has no encryptedDataKey', async () => {
+      const kms = new FakeKmsClient();
+      const cipher = newCipher({}, kms);
+      await assert.rejects(
+        () => cipher.decryptIfNeeded('cipher-kms-aes-128-no-edk', 'ciphertext-without-key'),
+        /encryptedDataKey is missing/i,
+        'ciphertext must not be handed back as if it were plaintext');
+      assert(kms.decryptCalls.length === 0, 'a response without the data key must not reach KMS');
     });
 
     it('should cache the plaintext data key so repeated reads skip KMS decrypt', async () => {
@@ -984,6 +994,27 @@ describe('test/cipher.test.ts', () => {
       mm.restore();
       mm(client.httpAgent, 'request', async () => { throw new Error('server down'); });
       assert(await client.getConfig(dataId, group) === plaintext);
+    });
+
+    it('should reject getConfig and notify no listener when the response lacks Encrypted-Data-Key', async () => {
+      const kms = new FakeKmsClient();
+      const client = createCipherClient(kms);
+      const dataId = 'cipher-kms-aes-128-missing-edk';
+      const group = 'DEFAULT_GROUP';
+      const { key, received } = attachSubscription(client, dataId, group);
+      const errors: Error[] = [];
+      client.on('error', (err: Error) => errors.push(err));
+      mm(client.httpAgent, 'request', async () => ({ data: 'ciphertext-without-key', headers: {} }));
+
+      await assert.rejects(() => client.getConfig(dataId, group), /encryptedDataKey is missing/i,
+        'getConfig must not return ciphertext for an envelope dataId');
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+
+      assert.deepStrictEqual(received, [], 'ciphertext must never reach a listener');
+      assert(errors.some(e => /encryptedDataKey is missing/i.test(e.message)), 'the missing key must stay observable');
+      assert(!(client as any).pendingDeliveries.has(key), 'retrying the same payload cannot conjure the missing key');
+      assert((client as any).deliveryRetryTimers.size === 0, 'no delivery retry may be scheduled for a missing data key');
     });
 
     it('should keep the plaintext path returning the raw body without requesting headers', async () => {
@@ -1631,6 +1662,61 @@ describe('test/cipher.test.ts', () => {
 
       assert(errors.some(e => /decrypt failed/i.test(e.message)), 'decryption failure on initial subscribe must be observable');
       assert(received.length === 0, 'listener must not be notified with undecryptable content');
+    });
+
+    it('should not queue a retry for a gRPC push whose content has no encryptedDataKey', async () => {
+      const client = createGrpcCipherClient(new FakeKmsClient());
+      const dataId = 'cipher-kms-aes-128-grpc-missing-edk-push';
+      const group = 'DEFAULT_GROUP';
+      const key = `${dataId}@@${group}`;
+      const received: string[] = [];
+      const errors: Error[] = [];
+      client.removeAllListeners('error');
+      client.on('error', (err: Error) => errors.push(err));
+      (client as any)._grpcSubscribers = new Map([[ key, [ (c: string) => received.push(c) ] ]]);
+      (client as any)._grpcFailoverState = new Map([[ key, {
+        dataId,
+        group,
+        useFailover: false,
+        failoverVersion: null,
+        content: 'old-value',
+        listenerRegistered: true,
+        listenerMd5: '',
+      } ]]);
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: 'ciphertext-without-key' }));
+
+      (client as any)._onGrpcConfigChanged({ dataId, group, tenant: '' });
+      await flush();
+
+      const state = (client as any)._grpcFailoverState.get(key);
+      assert.deepStrictEqual(received, [], 'ciphertext must never reach a listener');
+      assert(errors.some(e => /encryptedDataKey is missing/i.test(e.message)), 'the missing key must stay observable');
+      assert(state.pendingDelivery === undefined, 'retrying the same payload cannot conjure the missing key');
+      assert((client as any)._grpcDeliveryRetryTimers.size === 0, 'no push retry may be scheduled');
+    });
+
+    it('should not queue a retry when the initial gRPC subscribe has no encryptedDataKey', async () => {
+      const client = createGrpcCipherClient(new FakeKmsClient());
+      const dataId = 'cipher-kms-aes-128-grpc-missing-edk-init';
+      const group = 'DEFAULT_GROUP';
+      const key = `${dataId}@@${group}`;
+      const received: string[] = [];
+      const errors: Error[] = [];
+      client.removeAllListeners('error');
+      client.on('error', (err: Error) => errors.push(err));
+      mm((client as any)._grpcConfigProxy, 'getConfig', async () => ({ content: 'ciphertext-without-key' }));
+      mm((client as any)._grpcConfigProxy, 'addListener', async () => {});
+      mm((client as any)._grpcConfigProxy, 'removeListener', async () => {});
+
+      client.subscribe({ dataId, group }, (c: string) => received.push(c));
+      await flush();
+
+      const state = (client as any)._grpcFailoverState.get(key);
+      assert.deepStrictEqual(received, [], 'ciphertext must never reach a listener');
+      assert(errors.some(e => /encryptedDataKey is missing/i.test(e.message)), 'the missing key must stay observable');
+      assert(state.pendingDelivery === undefined, 'a payload without the data key cannot be retried into success');
+      assert((client as any)._grpcDeliveryRetryTimers.size === 0, 'no subscribe retry may be scheduled');
+      assert(state.listenerRegistered === true, 'the remote listener must still be registered for recovery via push');
     });
 
     it('should retry a failed gRPC push decrypt without another server change', async () => {

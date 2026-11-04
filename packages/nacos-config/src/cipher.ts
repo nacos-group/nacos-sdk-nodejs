@@ -29,6 +29,24 @@ export const ENCRYPTED_DATA_KEY_HEADER = 'Encrypted-Data-Key';
 /** HTTP publish form parameter / gRPC additionMap key used to carry the encryptedDataKey. */
 export const ENCRYPTED_DATA_KEY_PARAM = 'encryptedDataKey';
 
+/**
+ * An envelope (`cipher-kms-aes-*`) config arrived without its encryptedDataKey. The payload is
+ * structurally incomplete, so retrying the same response can never succeed -- only a fresh
+ * server response with the key can. Mirrors the Java KmsEncryptor, which rejects a blank key
+ * before calling KMS and does not fall back to its plaintext cache.
+ */
+export class CipherDataKeyMissingError extends Error {
+  constructor(dataId: string) {
+    super(`cannot decrypt ${dataId}: encryptedDataKey is missing from the server response`);
+    this.name = 'CipherDataKeyMissingError';
+  }
+}
+
+/** Whether a decrypt failure is caused by a payload that cannot recover by being retried. */
+export function isCipherDataKeyMissingError(err: any): boolean {
+  return !!err && err.name === 'CipherDataKeyMissingError';
+}
+
 const KMS_AES_128_ALGORITHM = 'cipher-kms-aes-128';
 const KMS_AES_256_ALGORITHM = 'cipher-kms-aes-256';
 const AES_128_KEY_SPEC = 'AES_128';
@@ -521,11 +539,13 @@ export class ConfigCipher {
 
   /**
    * Decrypt content read from the server or the local snapshot. Non-cipher dataIds and empty
-   * content pass through unchanged. Bare `cipher-*` dataIds are decrypted directly by KMS;
-   * `cipher-kms-aes-*` dataIds use envelope decryption, where a missing encryptedDataKey also
-   * passes through unchanged. `isFailover` marks content read from a user-maintained failover
-   * file, which is plaintext by contract (see disaster_recovery) and is never sent to KMS -- for
-   * any cipher dataId shape, including bare `cipher-*` whose server form is direct KMS ciphertext.
+   * content pass through unchanged. Bare `cipher-*` dataIds are decrypted directly by KMS.
+   * Envelope `cipher-kms-aes-*` dataIds need the encryptedDataKey that travels with the content;
+   * without it the payload cannot be decrypted, so it is reported as an error instead of being
+   * handed back as if it were plaintext (the Java extension throws on the same condition).
+   * `isFailover` marks content read from a user-maintained failover file, which is plaintext by
+   * contract (see disaster_recovery) and is never sent to KMS -- for any cipher dataId shape,
+   * including bare `cipher-*` whose server form is direct KMS ciphertext.
    */
   async decryptIfNeeded(dataId: string, content: string, encryptedDataKey?: string, isFailover?: boolean): Promise<string> {
     if (isFailover) {
@@ -547,7 +567,7 @@ export class ConfigCipher {
       return await this.getKmsClient().decrypt(content);
     }
     if (!encryptedDataKey) {
-      return content;
+      throw new CipherDataKeyMissingError(dataId);
     }
     const plainDataKey = await this.resolvePlainDataKey(encryptedDataKey);
     return aesEcbDecryptFromBase64(content, plainDataKey);

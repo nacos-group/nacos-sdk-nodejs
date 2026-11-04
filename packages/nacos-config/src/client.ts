@@ -32,7 +32,7 @@ import { checkParameters } from './utils';
 import { HttpAgent } from './http_agent';
 import { Configuration } from './configuration';
 import { GrpcConfigProxy } from './grpc_config_proxy';
-import { ConfigCipher, createConfigCipher } from './cipher';
+import { ConfigCipher, createConfigCipher, isCipherDataKeyMissingError } from './cipher';
 import { readConfigWithFailover, withSnapshotLock, ConfigReadResult } from './disaster_recovery';
 import { KeyedAsyncQueue } from './keyed_queue';
 import { GrpcConnection, GrpcTransportClient } from 'nacos-common';
@@ -695,8 +695,9 @@ export class DataClient extends Base implements BaseClient {
         // 解密失败（KMS 不可用 / content 与 edk 错配）：经 throwError 上报为 'error' 事件，
         // 避免被外层 op queue 的 .catch(() => {}) 静默吞掉；不回调监听器以免下发不可信内容。
         // 服务端已按 listenerMd5 记下这次推送、不会再发，因此把内容留成待投递工作重试。
+        // 缺 encryptedDataKey 的响应重试也不会自愈（Java 同样直接报错），只上报不排队。
         this.throwError(err);
-        if (this._isGrpcStateActive(key, state) && !state.useFailover) {
+        if (!isCipherDataKeyMissingError(err) && this._isGrpcStateActive(key, state) && !state.useFailover) {
           state.pendingDelivery = { content: rawContent, encryptedDataKey, attempts: 0 };
           this._scheduleGrpcDeliveryRetry(key, state);
         }
@@ -752,9 +753,10 @@ export class DataClient extends Base implements BaseClient {
       plainContent = await this.cipher.decryptIfNeeded(state.dataId, rawContent, encryptedDataKey, isFailover);
     } catch (err) {
       // 解密失败（KMS 不可用 / content 与 edk 错配）：经 throwError 上报为可观测错误，
-      // 不用不可信内容回调监听器；内容留成待投递工作重试，避免订阅者一直拿不到初值
+      // 不用不可信内容回调监听器；内容留成待投递工作重试，避免订阅者一直拿不到初值。
+      // 缺 encryptedDataKey 的响应重试也不会自愈（Java 同样直接报错），只上报不排队。
       this.throwError(err);
-      if (this._isGrpcStateActive(key, state)) {
+      if (!isCipherDataKeyMissingError(err) && this._isGrpcStateActive(key, state)) {
         state.pendingDelivery = { content: rawContent, encryptedDataKey, attempts: 0 };
         this._scheduleGrpcDeliveryRetry(key, state);
       }
