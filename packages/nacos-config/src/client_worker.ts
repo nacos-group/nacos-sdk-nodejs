@@ -44,6 +44,8 @@ export class ClientWorker extends Base implements IClientWorker {
   private cipher: ConfigCipher;
   /** 同一 key 的通知串行链：保证解密慢的旧版本不会晚于新版本回调（保持拉取顺序）。 */
   private deliveryChains = new Map<string, Promise<void>>();
+  /** 解密失败的通知仍有待投递工作（跨“定时器已触发、重试已排队”整个窗口），新订阅者不得单独补发。 */
+  private pendingDeliveries = new Set<string>();
   /** 解密失败后的待投递重试定时器；有界退避，成功投递或退订/关闭时清除。 */
   private deliveryRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** 重试退避窗口（测试可覆写以缩短等待）。 */
@@ -111,6 +113,7 @@ export class ClientWorker extends Base implements IClientWorker {
     }
     this.deliveryRetryTimers.clear();
     this.deliveryChains.clear();
+    this.pendingDeliveries.clear();
     if (this.cipher) {
       // Cascade so an injected KMS client is released (HTTP mode owns the cipher here).
       this.cipher.close();
@@ -152,8 +155,8 @@ export class ClientWorker extends Base implements IClientWorker {
     } else if (!is.nullOrUndefined(item.md5)) {
       // 用户边界：缓存中为密文时先解密再回调监听器；经由同一 key 的投递链保持顺序。
       // 已有失败投递在等待重试时不再单独补发：重试会广播给所有监听器（含刚加入的这个），
-      // 这里再发一次既重复，又会把待重试的工作清掉，让老监听器永远停在旧值。
-      if (!this.deliveryRetryTimers.has(key)) {
+      // 这里再发一次既重复，又会让老监听器的待投递工作失去代表。
+      if (!this.pendingDeliveries.has(key)) {
         this.enqueueDelivery(key, item, [ listener ]);
       }
     }
@@ -255,7 +258,12 @@ export class ClientWorker extends Base implements IClientWorker {
 
   /** 向该 key 的全部监听器广播内容；解密失败时保留为待投递工作并重试。 */
   private async deliverToSubscribers(key: string, item: any, snapshot: any): Promise<void> {
-    if (snapshot.md5 === null || item.deliveredMd5 === snapshot.md5) {
+    if (snapshot.md5 === null) {
+      return;
+    }
+    if (item.deliveredMd5 === snapshot.md5) {
+      // 该内容已成功下发过（例如容灾内容与当前值一致）：之前失败的待投递工作随之作废
+      this.pendingDeliveries.delete(key);
       return;
     }
     try {
@@ -265,10 +273,12 @@ export class ClientWorker extends Base implements IClientWorker {
       }
       item.deliveredMd5 = snapshot.md5;
       item.deliveryRetryAttempts = 0;
+      this.pendingDeliveries.delete(key);
       this.emit(key, plain);
     } catch (err) {
       this._error(err);
       if (!this.isClose && this.subscriptions.get(key) === item) {
+        this.pendingDeliveries.add(key);
         this.scheduleDeliveryRetry(key, item);
       }
     }
@@ -425,6 +435,7 @@ export class ClientWorker extends Base implements IClientWorker {
         if (item.useFailover) {
           item.useFailover = false;
           item.failoverVersion = null;
+          item.isFailover = false;
           this.debug('[failover-change] failover file deleted, dataId: %s, group: %s', item.dataId, item.group);
         }
         continue;
@@ -442,9 +453,12 @@ export class ClientWorker extends Base implements IClientWorker {
         if (item.md5 !== md5) {
           item.md5 = md5;
           item.content = content;
+          item.isFailover = true;
           this.debug('[failover-change] failover file %s, dataId: %s, group: %s, md5: %s',
             isNew ? 'created' : 'changed', item.dataId, item.group, md5);
-          setImmediate(() => this.emit(key, content));
+          // 走统一投递链：容灾切换与在途的服务端解密按入链顺序生效，且成功下发后同步
+          // deliveredMd5；否则删掉容灾文件、服务端值又回到原值时会被去重逻辑吞掉
+          this.enqueueDelivery(key, item);
         }
       }
     }
@@ -489,6 +503,7 @@ export class ClientWorker extends Base implements IClientWorker {
     if (this.listeners(key).length === 0) {
       this.subscriptions.delete(key);
       this.clearDeliveryRetry(key);
+      this.pendingDeliveries.delete(key);
     }
     return this;
   }

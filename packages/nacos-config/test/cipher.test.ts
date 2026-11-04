@@ -1072,6 +1072,43 @@ describe('test/cipher.test.ts', () => {
       assert.deepStrictEqual(received, [ 'secret=v1' ], 'the pending notification must be delivered once KMS recovers');
     });
 
+    it('should deliver a later server update whose decrypt failed during the KMS outage', async () => {
+      const kms = new FlakyDecryptKmsClient(0);
+      const client = createCipherClient(kms);
+      (client as any).deliveryRetryBaseMs = 5;
+      (client as any).deliveryRetryMaxMs = 10;
+      const dataId = 'cipher-kms-aes-128-retry-update';
+      const group = 'DEFAULT_GROUP';
+      const { received } = attachSubscription(client, dataId, group);
+      client.on('error', () => {});
+
+      const k1 = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const k2 = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const c1 = aesEcb('secret=v1', k1.plaintext, 'aes-128-ecb');
+      const c2 = aesEcb('secret=v2', k2.plaintext, 'aes-128-ecb');
+      let fetchCalls = 0;
+      mm(client.httpAgent, 'request', async () => {
+        fetchCalls++;
+        return fetchCalls === 1
+          ? { data: c1, headers: { 'encrypted-data-key': k1.ciphertextBlob } }
+          : { data: c2, headers: { 'encrypted-data-key': k2.ciphertextBlob } };
+      });
+
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+      assert.deepStrictEqual(received, [ 'secret=v1' ], 'the first value must be delivered while KMS is healthy');
+
+      // 服务端更新到 v2（新的 data key）；此时 KMS 不可用，v2 必须留作待投递工作而不是丢值
+      kms.failuresRemaining = 1;
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+      assert.deepStrictEqual(received, [ 'secret=v1' ], 'the undecryptable update must not replace the delivered value');
+
+      await delay(120);
+      assert(fetchCalls === 2, 'the recovery must reuse the fetched update, not re-fetch it');
+      assert.deepStrictEqual(received, [ 'secret=v1', 'secret=v2' ], 'the update must be delivered once KMS recovers');
+    });
+
     it('should keep the pending retry when a new listener subscribes', async () => {
       const kms = new FlakyDecryptKmsClient(1);
       const client = createCipherClient(kms);
@@ -1132,6 +1169,222 @@ describe('test/cipher.test.ts', () => {
       gate.resolve();
       await flush(20);
       assert.deepStrictEqual(received, [ 'secret=v1', 'secret=v2' ], 'notifications must keep fetch order');
+    });
+  });
+
+  describe('ClientWorker failover transitions (server -> failover -> server)', () => {
+
+    /** 可变容灾文件：mtime/content 同时表达“存在 / 删除 / 内容变更”。 */
+    function mockFailoverFile(client: ClientWorker) {
+      const state: { mtime: number | null; content: string | null } = { mtime: null, content: null };
+      mm((client as any).snapshot, 'getFailoverMtime', async () => state.mtime);
+      mm((client as any).snapshot, 'getFailover', async () => state.content);
+      return state;
+    }
+
+    it('should still recover the remaining listener when one unsubscribes during a pending retry', async () => {
+      const kms = new FlakyDecryptKmsClient(1);
+      const client = createCipherClient(kms);
+      (client as any).deliveryRetryBaseMs = 5;
+      (client as any).deliveryRetryMaxMs = 10;
+      const dataId = 'cipher-kms-aes-128-retry-unsubscribe-one';
+      const group = 'DEFAULT_GROUP';
+      const { received } = attachSubscription(client, dataId, group);
+      const key = (client as any).formatKey({ dataId, group });
+      const other: string[] = [];
+      const otherListener = (content: string) => other.push(content);
+      client.on(key, otherListener);
+      client.on('error', () => {});
+
+      const { plaintext: dataKey, ciphertextBlob } = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const ciphertext = aesEcb('secret=v1', dataKey, 'aes-128-ecb');
+      mm(client.httpAgent, 'request', async () => ({ data: ciphertext, headers: { 'encrypted-data-key': ciphertextBlob } }));
+
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+      client.unSubscribe({ dataId, group }, otherListener);
+      await delay(120);
+
+      assert.deepStrictEqual(received, [ 'secret=v1' ], 'remaining listeners must still recover');
+      assert.deepStrictEqual(other, [], 'the unsubscribed listener must not be notified');
+      assert((client as any).subscriptions.get(key), 'the subscription must stay registered');
+    });
+
+    it('should keep the pending retry working after the retry timer has already fired', async () => {
+      const kms = new FlakyDecryptKmsClient(2);
+      const client = createCipherClient(kms);
+      (client as any).deliveryRetryBaseMs = 5;
+      (client as any).deliveryRetryMaxMs = 10;
+      const dataId = 'cipher-kms-aes-128-retry-second-subscribe';
+      const group = 'DEFAULT_GROUP';
+      const { received } = attachSubscription(client, dataId, group);
+      client.on('error', () => {});
+
+      const { plaintext: dataKey, ciphertextBlob } = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const ciphertext = aesEcb('secret=v1', dataKey, 'aes-128-ecb');
+      mm(client.httpAgent, 'request', async () => ({ data: ciphertext, headers: { 'encrypted-data-key': ciphertextBlob } }));
+
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await delay(8); // 首个重试已触发并失败，第二个定时器在等待
+      const second: string[] = [];
+      client.subscribe({ dataId, group }, (content: string) => second.push(content));
+
+      await delay(150);
+      assert.deepStrictEqual(received, [ 'secret=v1' ], 'existing listeners must still recover');
+      assert.deepStrictEqual(second, [ 'secret=v1' ], 'the late subscriber must receive the value once');
+    });
+
+    it('should stop retry timers and pending work on close', async () => {
+      const kms = new FlakyDecryptKmsClient(1);
+      const client = createCipherClient(kms);
+      const dataId = 'cipher-kms-aes-128-retry-close';
+      const group = 'DEFAULT_GROUP';
+      const { received } = attachSubscription(client, dataId, group);
+      client.on('error', () => {});
+      const { plaintext: dataKey, ciphertextBlob } = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const ciphertext = aesEcb('secret=v1', dataKey, 'aes-128-ecb');
+      mm(client.httpAgent, 'request', async () => ({ data: ciphertext, headers: { 'encrypted-data-key': ciphertextBlob } }));
+
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+      assert((client as any).deliveryRetryTimers.size === 1, 'a retry must be pending');
+
+      client.close();
+      assert((client as any).deliveryRetryTimers.size === 0, 'close must clear retry timers');
+      assert((client as any).pendingDeliveries.size === 0, 'close must clear pending work');
+
+      await delay(30);
+      assert.deepStrictEqual(received, [], 'nothing may be delivered after close');
+    });
+
+    it('should not deliver work belonging to a previous subscription after resubscribe', async () => {
+      const kms = new GatedDecryptKmsClient();
+      const client = createCipherClient(kms);
+      const dataId = 'cipher-kms-aes-128-resubscribe';
+      const group = 'DEFAULT_GROUP';
+      const key = (client as any).formatKey({ dataId, group });
+      const oldReceived: string[] = [];
+      const oldListener = (content: string) => oldReceived.push(content);
+      client.on(key, oldListener);
+      (client as any).subscriptions.set(key, { dataId, group, md5: null, content: null });
+      client.on('error', () => {});
+
+      const { plaintext: dataKey, ciphertextBlob } = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const ciphertext = aesEcb('secret=v1', dataKey, 'aes-128-ecb');
+      const gate = deferred<void>();
+      kms.gates.set(ciphertextBlob, gate.promise);
+      mm(client.httpAgent, 'request', async () => ({ data: ciphertext, headers: { 'encrypted-data-key': ciphertextBlob } }));
+
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+      client.unSubscribe({ dataId, group }, oldListener);
+
+      const newReceived: string[] = [];
+      client.subscribe({ dataId, group }, (content: string) => newReceived.push(content));
+      await flush(5);
+      gate.resolve();
+      // 重新订阅会重新拉取配置（含落盘），必须等真实 I/O 而不是 setImmediate 轮次
+      await delay(30);
+
+      assert.deepStrictEqual(oldReceived, [], 'the previous subscription must not receive anything');
+      assert.deepStrictEqual(newReceived, [ 'secret=v1' ], 'the new subscription must receive its own value once');
+    });
+
+    it('should notify the unchanged server value after the failover file is removed (plain dataId)', async () => {
+      const client = createCipherClient(new FakeKmsClient());
+      const dataId = 'plain-failover-roundtrip';
+      const group = 'DEFAULT_GROUP';
+      const { received } = attachSubscription(client, dataId, group);
+      client.on('error', () => {});
+      const failover = mockFailoverFile(client);
+      mm(client.httpAgent, 'request', async () => 'server-value');
+
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+      failover.mtime = 1;
+      failover.content = 'emergency-value';
+      await (client as any).checkLocalFailover();
+      await flush();
+      failover.mtime = null;
+      failover.content = null;
+      await (client as any).checkLocalFailover();
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+
+      assert.deepStrictEqual(received, [ 'server-value', 'emergency-value', 'server-value' ]);
+    });
+
+    it('should notify the unchanged server value after failover changes and removal (cipher dataId)', async () => {
+      const kms = new FakeKmsClient();
+      const client = createCipherClient(kms);
+      const dataId = 'cipher-kms-aes-128-failover-roundtrip';
+      const group = 'DEFAULT_GROUP';
+      const { received } = attachSubscription(client, dataId, group);
+      client.on('error', () => {});
+      const failover = mockFailoverFile(client);
+      const { plaintext: dataKey, ciphertextBlob } = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const ciphertext = aesEcb('server-secret', dataKey, 'aes-128-ecb');
+      mm(client.httpAgent, 'request', async () => {
+        return { data: ciphertext, headers: { 'encrypted-data-key': ciphertextBlob } };
+      });
+
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+      failover.mtime = 1;
+      failover.content = 'emergency-1';
+      await (client as any).checkLocalFailover();
+      await flush();
+      failover.mtime = 2;
+      failover.content = 'emergency-2';
+      await (client as any).checkLocalFailover();
+      await flush();
+      failover.mtime = null;
+      failover.content = null;
+      await (client as any).checkLocalFailover();
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+
+      assert.deepStrictEqual(received, [ 'server-secret', 'emergency-1', 'emergency-2', 'server-secret' ]);
+    });
+
+    it('should not let a slow in-flight server decrypt overwrite the emergency value', async () => {
+      const kms = new GatedDecryptKmsClient();
+      const client = createCipherClient(kms);
+      const dataId = 'cipher-kms-aes-128-failover-inflight';
+      const group = 'DEFAULT_GROUP';
+      const { received } = attachSubscription(client, dataId, group);
+      client.on('error', () => {});
+      const failover = mockFailoverFile(client);
+
+      const k1 = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const k2 = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const c1 = aesEcb('server-v1', k1.plaintext, 'aes-128-ecb');
+      const c2 = aesEcb('server-v2', k2.plaintext, 'aes-128-ecb');
+      const gate = deferred<void>();
+      kms.gates.set(k2.ciphertextBlob, gate.promise);
+
+      let fetchCalls = 0;
+      mm(client.httpAgent, 'request', async () => {
+        fetchCalls++;
+        return fetchCalls === 1
+          ? { data: c1, headers: { 'encrypted-data-key': k1.ciphertextBlob } }
+          : { data: c2, headers: { 'encrypted-data-key': k2.ciphertextBlob } };
+      });
+
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+      // 新服务端版本还在解密中时切入容灾文件：容灾内容必须排在它之后、且不能被它覆盖
+      await (client as any).syncConfigs([ { dataId, group } ]);
+      failover.mtime = 1;
+      failover.content = 'emergency-value';
+      await (client as any).checkLocalFailover();
+      // 让容灾切换先落在事件循环上；修复后它必须排在在途解密之后，而不是抢在它前面
+      await delay(5);
+
+      gate.resolve();
+      await flush(20);
+      assert.deepStrictEqual(received, [ 'server-v1', 'server-v2', 'emergency-value' ],
+        'the emergency value must be the last notification');
     });
   });
 
@@ -1382,6 +1635,65 @@ describe('test/cipher.test.ts', () => {
 
       await delay(120);
       assert.deepStrictEqual(received, [ 'server-value' ], 'the subscriber must receive the value once KMS recovers');
+    });
+
+    /** 制造一次解密失败的 gRPC 推送，留下待投递重试，返回该 key 的监听器。 */
+    async function queueGrpcPushRetry(client: DataClient, dataId: string, group: string, received: string[]) {
+      const key = `${dataId}@@${group}`;
+      const listener = (c: string) => received.push(c);
+      client.removeAllListeners('error');
+      client.on('error', () => {});
+      (client as any)._grpcSubscribers = new Map([[ key, [ listener ] ]]);
+      (client as any)._grpcFailoverState = new Map([[ key, {
+        dataId,
+        group,
+        useFailover: false,
+        failoverVersion: null,
+        content: 'old-value',
+        listenerRegistered: true,
+        listenerMd5: '',
+      } ]]);
+      const proxy = (client as any)._grpcConfigProxy;
+      mm(proxy, 'getConfig', async () => ({ content: 'bogus-ciphertext', encryptedDataKey: 'edk-x' }));
+      mm(proxy, 'removeListener', async () => {});
+      (client as any)._onGrpcConfigChanged({ dataId, group, tenant: '' });
+      await flush();
+      return { key, listener };
+    }
+
+    it('should stop the pending gRPC retry when the last listener unsubscribes', async () => {
+      const client = createGrpcCipherClient(new FlakyDecryptKmsClient(5));
+      (client as any).grpcDeliveryRetryBaseMs = 5;
+      (client as any).grpcDeliveryRetryMaxMs = 10;
+      const dataId = 'cipher-kms-aes-128-grpc-retry-unsubscribe';
+      const group = 'DEFAULT_GROUP';
+      const received: string[] = [];
+      const { key, listener } = await queueGrpcPushRetry(client, dataId, group, received);
+      assert((client as any)._grpcDeliveryRetryTimers.size === 1, 'a retry must be pending');
+
+      client.unSubscribe({ dataId, group }, listener);
+
+      assert((client as any)._grpcDeliveryRetryTimers.size === 0, 'unsubscribe must clear the retry timer');
+      assert(!(client as any)._grpcFailoverState.has(key), 'the subscription state must be released');
+      await delay(120);
+      assert.deepStrictEqual(received, [], 'nothing may be delivered after unsubscribe');
+    });
+
+    it('should stop pending gRPC retries on close', async () => {
+      const client = createGrpcCipherClient(new FlakyDecryptKmsClient(5));
+      (client as any).grpcDeliveryRetryBaseMs = 5;
+      (client as any).grpcDeliveryRetryMaxMs = 10;
+      const dataId = 'cipher-kms-aes-128-grpc-retry-close';
+      const group = 'DEFAULT_GROUP';
+      const received: string[] = [];
+      await queueGrpcPushRetry(client, dataId, group, received);
+      assert((client as any)._grpcDeliveryRetryTimers.size === 1, 'a retry must be pending');
+
+      client.close();
+
+      assert((client as any)._grpcDeliveryRetryTimers.size === 0, 'close must clear retry timers');
+      await delay(120);
+      assert.deepStrictEqual(received, [], 'nothing may be delivered after close');
     });
 
     it('should keep failover state until the recovery content decrypts', async () => {

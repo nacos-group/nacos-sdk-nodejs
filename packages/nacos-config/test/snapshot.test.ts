@@ -46,9 +46,11 @@ describe('test/snapshot.test.ts', () => {
       content = await snapshot.get(key);
       assert(content === 'bar');
 
+      // 空内容视为删除（对齐 Java SDK saveSnapshot），避免故障回退读到过期快照
       await snapshot.save(key, null);
       content = await snapshot.get(key);
-      assert(content === '');
+      assert(content === null);
+      assert(!await fs.exists(snapshot.getSnapshotFile(key)));
     });
 
     it('should delete snapshot ok', async () => {
