@@ -1475,6 +1475,74 @@ describe('test/cipher.test.ts', () => {
       assert.deepStrictEqual(received, [ 'server-v1', 'server-v2', 'emergency-value' ],
         'the emergency value must be the last notification');
     });
+
+    it('should not commit a server fetch that started before the failover file appeared', async () => {
+      const client = createCipherClient(new FakeKmsClient());
+      const dataId = 'plain-failover-late-server';
+      const group = 'DEFAULT_GROUP';
+      const { key, received } = attachSubscription(client, dataId, group);
+      client.on('error', () => {});
+      const failover = mockFailoverFile(client);
+
+      const gate = deferred<void>();
+      mm(client.httpAgent, 'request', async () => {
+        await gate.promise;
+        return 'server-value';
+      });
+
+      const syncing = (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+      // 拉取开始后（已判定无容灾文件）用户写入容灾文件：本地应急配置优先，
+      // 这份在途服务端读取已经过期，不得覆盖它
+      failover.mtime = 1;
+      failover.content = 'emergency-value';
+      await (client as any).checkLocalFailover();
+      await flush();
+
+      gate.resolve();
+      await syncing;
+      await flush();
+
+      assert.deepStrictEqual(received, [ 'emergency-value' ],
+        'a late server result must not overwrite active failover');
+      assert((client as any).subscriptions.get(key).content === 'emergency-value',
+        'failover content must remain effective');
+    });
+
+    it('should not commit a stale cipher fetch (and its data key) after the failover file appeared', async () => {
+      const kms = new FakeKmsClient();
+      const client = createCipherClient(kms);
+      const dataId = 'cipher-kms-aes-128-failover-late-server';
+      const group = 'DEFAULT_GROUP';
+      const { key, received } = attachSubscription(client, dataId, group);
+      client.on('error', () => {});
+      const failover = mockFailoverFile(client);
+
+      const { plaintext, ciphertextBlob } = await kms.generateDataKey('alias/acs/mse', 'AES_128');
+      const ciphertext = aesEcb('server-secret', plaintext, 'aes-128-ecb');
+      const gate = deferred<void>();
+      mm(client.httpAgent, 'request', async () => {
+        await gate.promise;
+        return { data: ciphertext, headers: { 'encrypted-data-key': ciphertextBlob } };
+      });
+
+      const syncing = (client as any).syncConfigs([ { dataId, group } ]);
+      await flush();
+      failover.mtime = 1;
+      failover.content = 'emergency-value';
+      await (client as any).checkLocalFailover();
+      await flush();
+
+      gate.resolve();
+      await syncing;
+      await flush();
+
+      const item = (client as any).subscriptions.get(key);
+      assert.deepStrictEqual(received, [ 'emergency-value' ]);
+      assert(item.content === 'emergency-value', 'failover content must remain effective');
+      assert(item.isFailover === true,
+        'the emergency value must never be paired with the server data key');
+    });
   });
 
   describe('ClientWorker KMS concurrency (shared snapshot lock)', () => {

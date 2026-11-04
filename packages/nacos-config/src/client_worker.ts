@@ -191,6 +191,13 @@ export class ClientWorker extends Base implements IClientWorker {
 
       const { content, encryptedDataKey, source } = result.value;
       const isFailover = source === 'failover';
+      // 拉取开始后才写入的容灾文件：读取时已判定无容灾内容，这份服务端结果已过期。
+      // 容灾期间本地配置优先（对齐 Java isUseLocalConfigInfo），不得覆盖应急值；
+      // 否则 useFailover 与 failoverVersion 已就位，下一轮检查会跳过，应用将永久停在服务端值。
+      if (item.useFailover && !isFailover) {
+        this.debug('discard stale server result for %s: failover became active during fetch', key);
+        continue;
+      }
       const md5 = getMD5String(content, this.defaultEncoding);
       // 防止应用启动时，并发请求，导致同一个 key 重复触发
       if (item.md5 !== md5) {
