@@ -711,6 +711,10 @@ export class DataClient extends Base implements BaseClient {
       }
       this._clearGrpcDeliveryRetry(key);
       state.pendingDelivery = undefined;
+      // 内容未变（重复推送 / 与已下发值相同）：不重复回调，对齐 Java CacheData 的 md5 去重
+      if (plainContent === state.content) {
+        return;
+      }
       state.content = plainContent;
       this._notifyGrpcListeners(current, plainContent);
     }).catch(() => {});
@@ -728,11 +732,13 @@ export class DataClient extends Base implements BaseClient {
     let rawContent = '';
     let encryptedDataKey: string | undefined;
     let isFailover = false;
+    let fromServer = false;
     try {
       const result = await this._getConfigWithCache(state.dataId, state.group);
       rawContent = result.content === null ? '' : result.content;
       encryptedDataKey = result.encryptedDataKey;
       isFailover = result.source === 'failover';
+      fromServer = result.source === 'server';
     } catch (err) {
       this.throwError(err);
       return;
@@ -757,6 +763,12 @@ export class DataClient extends Base implements BaseClient {
       return;
     }
     if (plainContent) {
+      // 刚从服务端取到的内容已是权威值：更早失败推送留下的待投递工作与重试定时器
+      // 都可能比它旧，必须一起丢弃，否则重试晚到会把缓存和监听器回滚到旧版本。
+      if (fromServer) {
+        state.pendingDelivery = undefined;
+        this._clearGrpcDeliveryRetry(key);
+      }
       state.content = plainContent;
       this._notifyGrpcListeners([ listener ], plainContent);
     }

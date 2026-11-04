@@ -241,19 +241,17 @@ export class ClientWorker extends Base implements IClientWorker {
 
   /** 仅向指定监听器补发当前明文（新订阅者拿缓存值），失败上报但不重试。 */
   private async deliverToListeners(key: string, item: any, snapshot: any, listeners: Function[]): Promise<void> {
+    let plain: string;
     try {
-      const plain = await this.cipher.decryptIfNeeded(item.dataId, snapshot.content, snapshot.encryptedDataKey, snapshot.isFailover);
-      if (this.isClose || this.subscriptions.get(key) !== item) {
-        return;
-      }
-      for (const listener of listeners) {
-        if (this.listeners(key).indexOf(listener) >= 0) {
-          listener(plain);
-        }
-      }
+      plain = await this.cipher.decryptIfNeeded(item.dataId, snapshot.content, snapshot.encryptedDataKey, snapshot.isFailover);
     } catch (err) {
       this._error(err);
+      return;
     }
+    if (this.isClose || this.subscriptions.get(key) !== item) {
+      return;
+    }
+    this.notifyListeners(key, plain, listeners);
   }
 
   /** 向该 key 的全部监听器广播内容；解密失败时保留为待投递工作并重试。 */
@@ -266,20 +264,42 @@ export class ClientWorker extends Base implements IClientWorker {
       this.pendingDeliveries.delete(key);
       return;
     }
+    let plain: string;
     try {
-      const plain = await this.cipher.decryptIfNeeded(item.dataId, snapshot.content, snapshot.encryptedDataKey, snapshot.isFailover);
-      if (this.isClose || this.subscriptions.get(key) !== item) {
-        return;
-      }
-      item.deliveredMd5 = snapshot.md5;
-      item.deliveryRetryAttempts = 0;
-      this.pendingDeliveries.delete(key);
-      this.emit(key, plain);
+      plain = await this.cipher.decryptIfNeeded(item.dataId, snapshot.content, snapshot.encryptedDataKey, snapshot.isFailover);
     } catch (err) {
       this._error(err);
       if (!this.isClose && this.subscriptions.get(key) === item) {
         this.pendingDeliveries.add(key);
         this.scheduleDeliveryRetry(key, item);
+      }
+      return;
+    }
+    if (this.isClose || this.subscriptions.get(key) !== item) {
+      return;
+    }
+    item.deliveredMd5 = snapshot.md5;
+    item.deliveryRetryAttempts = 0;
+    this.pendingDeliveries.delete(key);
+    this.notifyListeners(key, plain);
+  }
+
+  /**
+   * 逐个通知监听器：单个监听器抛异常不得影响其余监听器，也不得被当作解密失败而重试。
+   * 异常（含 async 监听器返回的 rejected promise）统一经 _error 上报。
+   */
+  private notifyListeners(key: string, plain: string, listeners?: Function[]): void {
+    for (const listener of listeners || this.listeners(key)) {
+      if (this.isClose || this.listeners(key).indexOf(listener) < 0) {
+        continue;
+      }
+      try {
+        const ret: any = listener(plain);
+        if (ret && typeof ret.then === 'function') {
+          ret.then(undefined, (err: Error) => this._error(err));
+        }
+      } catch (err) {
+        this._error(err);
       }
     }
   }
@@ -435,7 +455,8 @@ export class ClientWorker extends Base implements IClientWorker {
         if (item.useFailover) {
           item.useFailover = false;
           item.failoverVersion = null;
-          item.isFailover = false;
+          // 不清 item.isFailover：item.content 此刻仍是容灾明文，要等 syncConfigs 用服务端值
+          // 覆盖后（连同 encryptedDataKey）才失效；提前清掉会让新订阅者把明文当密文送去解密。
           this.debug('[failover-change] failover file deleted, dataId: %s, group: %s', item.dataId, item.group);
         }
         continue;
