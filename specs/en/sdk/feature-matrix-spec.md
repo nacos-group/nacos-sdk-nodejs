@@ -26,7 +26,10 @@ management API, following the
 
 ## 1. Reading The Tables
 
-**Node today** describes `master` on the default gRPC transport.
+**Node today** describes `master` on the default gRPC transport. npm 2.6.3 has no gRPC,
+so these values are not released behavior. The
+[implementation spec](./sdk-nodejs-impl-spec.md#9-30-migration) keeps the two baselines
+apart.
 
 | Value | Meaning |
 | --- | --- |
@@ -51,8 +54,8 @@ Update a row in the same PR that changes the capability.
 | Publish | `publishConfig` | `publishSingle` | Partial: non-200 responses resolve to `false` | 3.0 (PR3) |
 | CAS publish | `publishConfigCas` | `publishConfigCas` | Partial: every non-200 response resolves to `false`, not only md5 conflict | 3.0 (PR3) |
 | Delete | `removeConfig` | `remove` | Partial: non-200 responses resolve to `false` | 3.0 (PR3) |
-| Failover and snapshot | `LocalConfigInfoProcessor` | Internal | Yes | - |
-| Config filter | `addConfigFilter` | - | No | 3.0 (PR5) |
+| Failover and snapshot | `LocalConfigInfoProcessor` | Internal | Partial: an empty string is treated as deletion; authorization failures fall back to the snapshot | 3.0 (PR5) |
+| Config filter | `addConfigFilter` | `addConfigFilter` | No | 3.0 (PR5) |
 | Config encryption | `ConfigEncryptionFilter` | - | No | 3.0 or 3.x, after PR5 |
 | Fuzzy watch | `fuzzyWatch`, `fuzzyWatchWithGroupKeys`, `cancelFuzzyWatch` | - | No | 3.x (PR6) |
 | Server status | `getServerStatus` | - | No | Not planned |
@@ -63,7 +66,7 @@ Update a row in the same PR that changes the capability.
 | Capability | Java | Node API | Node today | Target |
 | --- | --- | --- | --- | --- |
 | Register | `registerInstance` | `registerInstance` | Partial: multiple instances per service and persistent instances are wrong | 3.0 (PR4) |
-| Deregister | `deregisterInstance` | `deregisterInstance` | Yes | - |
+| Deregister | `deregisterInstance` | `deregisterInstance` | Partial: no persistent path; non-200 responses resolve; the local record is removed before the server confirms | 3.0 (PR4) |
 | Batch register | `batchRegisterInstance` | - | No | 3.0 (PR4) |
 | Batch deregister | `batchDeregisterInstance` | - | No | 3.0 (PR4) |
 | Query instances | `getAllInstances`, `selectInstances`, `selectOneHealthyInstance` | Same names | Partial: default-parameter discovery can return empty | 3.0 |

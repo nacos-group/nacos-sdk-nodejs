@@ -54,7 +54,7 @@ replaced by a fallback.
 
 | Stage | Contract |
 | --- | --- |
-| Construct | Validates options synchronously and throws on invalid values. Starts connecting in the background, as in 2.x. |
+| Construct | Validates options synchronously and throws on invalid values. Starts connecting in the background, as in 2.6.x. |
 | `ready()` | Resolves when the client can serve requests. Rejects as defined in section 3.1. |
 | `close()` | Stops timers, cancels pending work, closes connections, and removes server push handlers. Calling it again has no effect. |
 
@@ -90,7 +90,7 @@ the same common options.
 | `username`, `password` | common | - | Login credentials. |
 | `accessKey`, `secretKey`, `ramRoleName`, `signatureRegionId` | common | - | RAM-style credentials. |
 | `ssl` | common | `false` | Use TLS. |
-| `requestTimeout` | common | `3000` on gRPC, as in Java; `5000` on HTTP, as in 2.x | Request timeout in milliseconds. |
+| `requestTimeout` | common | `3000` on gRPC, as in Java; `5000` on HTTP, as in 2.6.x | Request timeout in milliseconds. |
 | `transport` | common | `grpc` | `grpc` or `http`. |
 | `logger` | common | Console-based logger | Logger with `info`, `warn`, and `error`. |
 | `cacheDir` | config | `~/.node-diamond-client-cache` | Snapshot and failover directory. |
@@ -130,6 +130,7 @@ migration only has to handle behavior changes.
 | `publishSingle(dataId, group, content, options?)` | `publishConfig` | Resolves `true`. Rejects on failure. |
 | `publishConfigCas(dataId, group, content, casMd5, options?)` | `publishConfigCas` | Resolves `true`, or `false` on md5 conflict. Rejects on any other failure. |
 | `remove(dataId, group)` | `removeConfig` | Resolves `true`. Removing a missing config succeeds. Rejects on failure. |
+| `addConfigFilter(filter)` | `addConfigFilter` | Added in 3.0. See the [Config Pipeline Spec](../config/config-pipeline-spec.md#8-transform). |
 | `close()` | `shutDown` | See section 3. |
 
 ### 5.2 `NacosNamingClient`
@@ -232,22 +233,57 @@ in 3.x: it keeps existing behavior, gets regression tests against Nacos 2.5.5,
 and is not brought to feature parity. New APIs reject with
 `NacosUnsupportedError` on HTTP.
 
-Failure semantics in section 6 apply to gRPC. HTTP keeps its 2.x return values,
-and the migration guide lists the differences.
+Failure semantics in section 6 apply to gRPC. HTTP keeps its 2.6.x behavior, and the
+migration guide lists the differences.
 
-## 9. 3.0 Breaking Changes
+## 9. 3.0 Migration
 
-| Change | 2.x | 3.0 |
+There are two baselines, and they must not be mixed. npm 2.6.3 has no gRPC, so 3.0 is the
+first release with it. Behavior that exists only on `master` is not a contract that users
+depend on, and 3.0 does not preserve it.
+
+### 9.1 Released 2.6.x To 3.0
+
+These rows are the migration guide. Compatibility tests use 2.6.3 as their baseline.
+
+| Topic | 2.6.x | 3.0 |
 | --- | --- | --- |
-| Package | `nacos`, `nacos-naming`, `nacos-config` | `@nacos-group/client`; legacy names are bridges |
+| Package | `nacos`, `nacos-naming`, `nacos-config` | `@nacos-group/client`. Legacy names are bridges. |
+| Exports | Internals such as `ClientWorker` and `HostReactor` are exported | See section 11. |
 | Node.js | `>= 8.0.0` declared | `>= 18` |
+| Default transport | HTTP, with long polling and UDP push | gRPC. The server gRPC port must be reachable. Set `transport: 'http'` to stay on HTTP. |
 | Config client sharing | Shared through `cluster-client` | Not shared by default. See the [Architecture Spec](../design/architecture-spec.md#5-client-isolation). |
-| `publishSingle`, `remove` on gRPC | Resolve `false` on a non-200 response | Reject |
-| Failed login | Not reported by `ready()` | `ready()` rejects |
-| Legacy config APIs on gRPC | Inconsistent; for example, `publishToAllUnit` resolves `true` without publishing | Reject with `NacosUnsupportedError` |
-| `getCurrentUnit` on gRPC | Returns `'gRPC'` | Rejects with `NacosUnsupportedError` |
+| Credentials | `username` and `password` sent with each request | Login once, then a token. Rejected credentials make `ready()` reject. |
+| Legacy config APIs | Work | Reject with `NacosUnsupportedError` on gRPC. Unchanged on HTTP. |
+| Failed writes | Reject with a plain `Error` | Reject with a `NacosError` subclass. |
+| Discovery failure with nothing cached | Emits `error` and resolves `[]` | Rejects. |
+| Authorization rejected on `getConfig`, snapshot present | Resolves the snapshot | Rejects. |
+| Option names | `serverList`, `ak`, `sk` on naming | Deprecated. See section 4. |
 
-The migration guide must cover every row before `3.0.0`.
+Behavior that stays the same as 2.6.x: `publishSingle` and `remove` resolve `true` and reject
+on failure, a new config listener receives the current value at once, a deleted config is
+delivered as `null`, and several instances of one service can be registered from one client.
+
+### 9.2 Unreleased `master` To 3.0
+
+These rows are defects in the unreleased gRPC work. They are corrected, not migrated, so they
+do not belong in the migration guide.
+
+| Area | `master` | 3.0 |
+| --- | --- | --- |
+| `publishSingle`, `remove` | Resolve `false` on a non-200 response | Reject |
+| `publishConfigCas` | Every non-200 response resolves `false` | Only an md5 conflict does |
+| Legacy config APIs | Inconsistent; for example, `publishToAllUnit` resolves `true` without publishing | Reject with `NacosUnsupportedError` |
+| `getCurrentUnit`, `getAllUnits` | Return `'gRPC'` and `[]` | Reject with `NacosUnsupportedError` |
+| Deleted config | Delivered as `''` | Delivered as `null` |
+| Snapshot | An empty string deletes it | An empty string is valid content |
+| Snapshot fallback | Used for every query failure | Not used when authorization is rejected |
+| Failed login | Reported as a success | `ready()` rejects |
+| Token | Never refreshed | Refreshed before it expires |
+| Discovery | Empty with default parameters | Works |
+| Second instance of a service | Replaces the first | Adds to the set |
+| Persistent instance | Registered as ephemeral | Uses the persistent path |
+| `deregisterInstance` | Non-200 resolves; local record removed first | Rejects; record kept until confirmed |
 
 ## 10. Maintenance
 
