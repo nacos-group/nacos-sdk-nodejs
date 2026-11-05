@@ -53,8 +53,8 @@ differences in language implementation specs. These specs are that record.
 | [Code Style Spec](./en/design/code-style-spec.md) | Language, formatting, and code rules. | Draft |
 | [Config Pipeline Spec](./en/config/config-pipeline-spec.md) | Fetch, cache, transform, and delivery boundaries; filter contract. | Draft |
 | [KMS Encryption Plugin Spec](./en/config/kms-encryption-plugin-spec.md) | Aliyun KMS formats, data key rules, and failure classification. | Draft, completed with the KMS PR |
-| Naming Runtime Spec | Registration, subscription, service cache, and redo. | Planned |
-| Node.js Runtime Spec | Addressing, connection, ability negotiation, and auth. | Planned |
+| [Naming Runtime Spec](./en/naming/naming-runtime-spec.md) | Registration, subscription, service cache, and redo. | Draft |
+| [Node.js Runtime Spec](./en/client/nodejs-runtime-spec.md) | Addressing, connection, ability negotiation, and auth. | Draft |
 | Test Design Spec | Test layers, scenario matrix, and release gates. | Planned |
 
 English is the first language. A Simplified Chinese copy can follow under
