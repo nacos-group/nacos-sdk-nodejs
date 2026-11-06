@@ -32,6 +32,7 @@ import { checkParameters } from './utils';
 import { HttpAgent } from './http_agent';
 import { Configuration } from './configuration';
 import { GrpcConfigProxy } from './grpc_config_proxy';
+import { ConfigCipher, createConfigCipher, isCipherDataKeyMissingError } from './cipher';
 import { readConfigWithFailover, withSnapshotLock, ConfigReadResult } from './disaster_recovery';
 import { KeyedAsyncQueue } from './keyed_queue';
 import { GrpcConnection, GrpcTransportClient } from 'nacos-common';
@@ -51,14 +52,20 @@ interface GrpcFailoverState {
   failoverVersion: number | null;
   content: string | null;
   listenerRegistered: boolean;
-  // 远端监听注册所需的 md5（服务端原文计算）；注册失败后由 watcher 据此重试 addListener
+  // 远端监听注册所需的 md5（服务端原文/密文计算）；注册失败后由 watcher 据此重试 addListener
   listenerMd5: string | null;
+  /**
+   * 已拉取但解密失败的用户可见内容（raw 密文 + EDK），与 content 分开保存：
+   * 服务端已按 listenerMd5 记下这次推送，不会重发，必须在这里保留成待投递工作。
+   */
+  pendingDelivery?: { content: string; encryptedDataKey?: string; attempts: number };
 }
 
 export class DataClient extends Base implements BaseClient {
 
   private clients: Map<string, IClientWorker>;
   private configuration: IConfiguration;
+  private cipher: ConfigCipher;
   protected snapshot: ISnapshot;
   protected serverMgr: IServerListManager | null;
   protected httpAgent;
@@ -70,6 +77,10 @@ export class DataClient extends Base implements BaseClient {
   private _grpcFailoverState: Map<string, GrpcFailoverState> | null;
   private _failoverWatcher: any;
   private _grpcOpQueue: KeyedAsyncQueue | null;
+  private _grpcDeliveryRetryTimers: Map<string, ReturnType<typeof setTimeout>>;
+  /** 解密失败重试的有界退避窗口（测试可覆写以缩短等待）。 */
+  protected grpcDeliveryRetryBaseMs: number;
+  protected grpcDeliveryRetryMaxMs: number;
   private _closed: boolean;
   private _failoverChecking: boolean;
 
@@ -89,6 +100,9 @@ export class DataClient extends Base implements BaseClient {
     this._grpcFailoverState = null;
     this._failoverWatcher = null;
     this._grpcOpQueue = null;
+    this._grpcDeliveryRetryTimers = new Map();
+    this.grpcDeliveryRetryBaseMs = 1000;
+    this.grpcDeliveryRetryMaxMs = 30000;
     this._closed = false;
     this._failoverChecking = false;
 
@@ -99,6 +113,8 @@ export class DataClient extends Base implements BaseClient {
       // gRPC mode: skip ServerListManager and HttpAgent; set up gRPC stack
       this.serverMgr = null;
       this.httpAgent = null;
+      // gRPC 模式下 KMS 信封加解密由 DataClient 直接负责（HTTP 模式在 ClientWorker 内部完成）
+      this.cipher = createConfigCipher(this.configuration);
 
       this.configuration.merge({
         snapshot: this.snapshot,
@@ -149,7 +165,6 @@ export class DataClient extends Base implements BaseClient {
 
       const CustomHttpAgent = this.configuration.get(ClientOptionKeys.HTTP_AGENT);
       this.httpAgent = CustomHttpAgent ? new CustomHttpAgent({ configuration: this.configuration }) : new HttpAgent({ configuration: this.configuration });
-
       this.configuration.merge({
         snapshot: this.snapshot,
         serverMgr: this.serverMgr,
@@ -266,6 +281,7 @@ export class DataClient extends Base implements BaseClient {
           if (listeners.length === 0) {
             this._grpcSubscribers.delete(key);
             if (this._grpcFailoverState) { this._grpcFailoverState.delete(key); }
+            this._clearGrpcDeliveryRetry(key);
             // 同步失活已完成；远端 remove 入队，排在旧 init 的 add 之后、新 subscribe 的 init 之前
             if (this._grpcOpQueue) {
               this._grpcOpQueue.run(key, () => this._grpcConfigProxy!.removeListener(dataId, group)).catch(() => {});
@@ -274,6 +290,7 @@ export class DataClient extends Base implements BaseClient {
         } else {
           this._grpcSubscribers.delete(key);
           if (this._grpcFailoverState) { this._grpcFailoverState.delete(key); }
+          this._clearGrpcDeliveryRetry(key);
           // 远端 remove 入队，保持同 key add/remove FIFO 顺序
           if (this._grpcOpQueue) {
             this._grpcOpQueue.run(key, () => this._grpcConfigProxy!.removeListener(dataId, group)).catch(() => {});
@@ -304,8 +321,12 @@ export class DataClient extends Base implements BaseClient {
     checkParameters(dataId, group);
     if (this._grpcConfigProxy) {
       // 带本地容灾读取：failover > 服务端 > 快照（对齐 Java SDK 读优先级）
-      const result = await this._getConfigWithCache(dataId, group, this.configuration.get(ClientOptionKeys.NAMESPACE));
-      return result.content === null ? '' : result.content;
+      const { content, encryptedDataKey, source } = await this._getConfigWithCache(dataId, group, this.configuration.get(ClientOptionKeys.NAMESPACE));
+      if (content === null) {
+        return '';
+      }
+      // 用户边界：cipher dataId 解密后返回明文；failover 明文直接透传不解密
+      return await this.cipher.decryptIfNeeded(dataId, content, encryptedDataKey, source === 'failover');
     }
     const client = this.getClient(options);
     return await client.getConfig(dataId, group);
@@ -334,11 +355,15 @@ export class DataClient extends Base implements BaseClient {
   async publishSingle(dataId, group, content, options?: UnitOptions) {
     checkParameters(dataId, group);
     if (this._grpcConfigProxy) {
+      // 用户边界：cipher dataId 先加密，密文与 encryptedDataKey 经 additionMap 发布
+      const encryptResult = await this.cipher.encryptIfNeeded(dataId, content);
       return await this._grpcConfigProxy.publishSingle(
         dataId, group,
         this.configuration.get(ClientOptionKeys.NAMESPACE),
-        content,
-        options && options.type
+        encryptResult.content,
+        options && options.type,
+        undefined,
+        encryptResult.encryptedDataKey
       );
     }
     const client = this.getClient(options);
@@ -362,12 +387,15 @@ export class DataClient extends Base implements BaseClient {
       throw new Error('[DataClient] publishConfigCas requires casMd5, use getConfig to fetch the current md5');
     }
     if (this._grpcConfigProxy) {
+      // 用户边界：cipher dataId 先加密，密文与 encryptedDataKey 经 additionMap 发布（与 publishSingle 一致）
+      const encryptResult = await this.cipher.encryptIfNeeded(dataId, content);
       return await this._grpcConfigProxy.publishSingle(
         dataId, group,
         this.configuration.get(ClientOptionKeys.NAMESPACE),
-        content,
+        encryptResult.content,
         options && options.type,
-        casMd5
+        casMd5,
+        encryptResult.encryptedDataKey
       );
     }
     const client = this.getClient(options);
@@ -393,6 +421,7 @@ export class DataClient extends Base implements BaseClient {
         if (removed !== true) {
           return false;
         }
+        // 同步清理本地快照，避免服务端已删除的配置残留在缓存里（与 HTTP 模式一致）
         await this.snapshot.delete(key);
         return removed;
       });
@@ -486,6 +515,10 @@ export class DataClient extends Base implements BaseClient {
     }
     this._closed = true;
     this._stopFailoverWatcher();
+    for (const timer of this._grpcDeliveryRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this._grpcDeliveryRetryTimers.clear();
     if (this._grpcSubscribers) {
       this._grpcSubscribers.clear();
     }
@@ -505,6 +538,10 @@ export class DataClient extends Base implements BaseClient {
       client.close();
     }
     this.clients.clear();
+    if (this.cipher) {
+      // gRPC mode owns the cipher on the DataClient itself; release its KMS client on shutdown.
+      this.cipher.close();
+    }
   }
 
   protected getClient(options: { unit?: string; group?; dataId? } = {}): IClientWorker {
@@ -597,16 +634,21 @@ export class DataClient extends Base implements BaseClient {
    * - 用户手工维护的 failover 文件存在时优先返回；
    * - 否则查询服务端，成功后落快照（空/缺失内容由 Snapshot.save 统一按删除处理，等价 Java saveSnapshot(null)）；
    * - 服务端异常时回退本地快照，快照也没有才抛错。
+   * 返回原始内容（cipher dataId 为密文）与随行 encryptedDataKey，解密只在用户边界进行；
+   * 快照读写全部由 readConfigWithFailover 在共享快照锁内串行执行。
    */
   private async _getConfigWithCache(dataId: string, group: string, tenant?: string): Promise<ConfigReadResult> {
     const key = this._getSnapshotKey(dataId, group);
     return await readConfigWithFailover({
       snapshotKey: key,
+      isCipher: this.cipher.isCipherDataId(dataId),
       snapshot: this.snapshot,
       fetchFromServer: () => this._grpcConfigProxy!.getConfig(dataId, group, tenant),
       readSnapshotFallback: () => this.snapshot.get(key),
       onServerError: err => this.throwError(err),
-      clearSnapshot: () => this.snapshot.delete(key),
+      clearSnapshot: async () => {
+        await this.snapshot.delete(key);
+      },
     });
   }
 
@@ -629,9 +671,14 @@ export class DataClient extends Base implements BaseClient {
       if (state.useFailover) {
         return;
       }
-      let result: ConfigReadResult;
+      let rawContent = '';
+      let encryptedDataKey: string | undefined;
+      let isFailover = false;
       try {
-        result = await this._getConfigWithCache(evt.dataId, evt.group);
+        const result = await this._getConfigWithCache(evt.dataId, evt.group);
+        rawContent = result.content === null ? '' : result.content;
+        encryptedDataKey = result.encryptedDataKey;
+        isFailover = result.source === 'failover';
       } catch (err) {
         this.throwError(err);
         return;
@@ -640,13 +687,37 @@ export class DataClient extends Base implements BaseClient {
       if (!this._isGrpcStateActive(key, state) || state.useFailover) {
         return;
       }
+      // 用户边界：密文解密后再回调监听器（解密可能触发 KMS，异步）
+      let plainContent = '';
+      try {
+        plainContent = await this.cipher.decryptIfNeeded(evt.dataId, rawContent, encryptedDataKey, isFailover);
+      } catch (err) {
+        // 解密失败（KMS 不可用 / content 与 edk 错配）：经 throwError 上报为 'error' 事件，
+        // 避免被外层 op queue 的 .catch(() => {}) 静默吞掉；不回调监听器以免下发不可信内容。
+        // 服务端已按 listenerMd5 记下这次推送、不会再发，因此把内容留成待投递工作重试。
+        // 缺 encryptedDataKey 的响应重试也不会自愈（Java 同样直接报错），只上报不排队。
+        this.throwError(err);
+        if (!isCipherDataKeyMissingError(err) && this._isGrpcStateActive(key, state) && !state.useFailover) {
+          state.pendingDelivery = { content: rawContent, encryptedDataKey, attempts: 0 };
+          this._scheduleGrpcDeliveryRetry(key, state);
+        }
+        return;
+      }
+      if (!this._isGrpcStateActive(key, state) || state.useFailover) {
+        return;
+      }
       const current = this._grpcSubscribers ? this._grpcSubscribers.get(key) : undefined;
       if (!current || current.length === 0) {
         return;
       }
-      const content = result.content === null ? '' : result.content;
-      state.content = content;
-      this._notifyGrpcListeners(current, content);
+      this._clearGrpcDeliveryRetry(key);
+      state.pendingDelivery = undefined;
+      // 内容未变（重复推送 / 与已下发值相同）：不重复回调，对齐 Java CacheData 的 md5 去重
+      if (plainContent === state.content) {
+        return;
+      }
+      state.content = plainContent;
+      this._notifyGrpcListeners(current, plainContent);
     }).catch(() => {});
   }
 
@@ -659,9 +730,16 @@ export class DataClient extends Base implements BaseClient {
     if (!this._isGrpcStateActive(key, state) || !this._hasGrpcListener(key, listener)) {
       return;
     }
-    let result: ConfigReadResult;
+    let rawContent = '';
+    let encryptedDataKey: string | undefined;
+    let isFailover = false;
+    let fromServer = false;
     try {
-      result = await this._getConfigWithCache(state.dataId, state.group);
+      const result = await this._getConfigWithCache(state.dataId, state.group);
+      rawContent = result.content === null ? '' : result.content;
+      encryptedDataKey = result.encryptedDataKey;
+      isFailover = result.source === 'failover';
+      fromServer = result.source === 'server';
     } catch (err) {
       this.throwError(err);
       return;
@@ -669,10 +747,32 @@ export class DataClient extends Base implements BaseClient {
     if (!this._isGrpcStateActive(key, state) || !this._hasGrpcListener(key, listener)) {
       return;
     }
-    const content = result.content === null ? '' : result.content;
-    if (content) {
-      state.content = content;
-      this._notifyGrpcListeners([ listener ], content);
+    // 用户边界：初始内容解密后再回调监听器（解密可能触发 KMS，异步）
+    let plainContent = '';
+    try {
+      plainContent = await this.cipher.decryptIfNeeded(state.dataId, rawContent, encryptedDataKey, isFailover);
+    } catch (err) {
+      // 解密失败（KMS 不可用 / content 与 edk 错配）：经 throwError 上报为可观测错误，
+      // 不用不可信内容回调监听器；内容留成待投递工作重试，避免订阅者一直拿不到初值。
+      // 缺 encryptedDataKey 的响应重试也不会自愈（Java 同样直接报错），只上报不排队。
+      this.throwError(err);
+      if (!isCipherDataKeyMissingError(err) && this._isGrpcStateActive(key, state)) {
+        state.pendingDelivery = { content: rawContent, encryptedDataKey, attempts: 0 };
+        this._scheduleGrpcDeliveryRetry(key, state);
+      }
+    }
+    if (!this._isGrpcStateActive(key, state) || !this._hasGrpcListener(key, listener)) {
+      return;
+    }
+    if (plainContent) {
+      // 刚从服务端取到的内容已是权威值：更早失败推送留下的待投递工作与重试定时器
+      // 都可能比它旧，必须一起丢弃，否则重试晚到会把缓存和监听器回滚到旧版本。
+      if (fromServer) {
+        state.pendingDelivery = undefined;
+        this._clearGrpcDeliveryRetry(key);
+      }
+      state.content = plainContent;
+      this._notifyGrpcListeners([ listener ], plainContent);
     }
     // 存在容灾文件则读取其内容并进入 failover 模式；仅当与已读内容不同才再次通知（去重）
     const snapshotKey = this._getSnapshotKey(state.dataId, state.group);
@@ -688,18 +788,21 @@ export class DataClient extends Base implements BaseClient {
       if (failoverContent !== null) {
         state.useFailover = true;
         state.failoverVersion = mtime;
+        // 容灾内容优先，之前未解密成功的服务端推送不再下发
+        state.pendingDelivery = undefined;
+        this._clearGrpcDeliveryRetry(key);
         if (failoverContent !== state.content) {
           state.content = failoverContent;
           this._notifyGrpcListeners([ listener ], failoverContent);
         }
       }
     }
-    // 单飞注册远端监听：同 key 只注册一次；md5 基于服务端原文，与服务端探针一致。
+    // 单飞注册远端监听：同 key 只注册一次；md5 基于服务端原始内容（cipher 为密文），与服务端探针一致。
     // 失败保留 listenerMd5 与 listenerRegistered=false，交由 watcher 每轮重试；
     // 失活补偿 remove 由 unSubscribe/close 经 op queue 处理，避免同 key 双重 remove。
     if (!state.listenerRegistered) {
       const crypto = require('crypto');
-      const md5 = content ? crypto.createHash('md5').update(content).digest('hex') : '';
+      const md5 = rawContent ? crypto.createHash('md5').update(rawContent).digest('hex') : '';
       state.listenerMd5 = md5;
       state.listenerRegistered = true;
       try {
@@ -722,6 +825,80 @@ export class DataClient extends Base implements BaseClient {
     }
     const listeners = this._grpcSubscribers.get(key);
     return !!listeners && listeners.indexOf(listener) >= 0;
+  }
+
+  /**
+   * 解密失败的 gRPC 推送内容留作待投递工作，按有界指数退避重试。
+   * 服务端已按 listenerMd5 记下这次推送、不会再发；不重试就等于 KMS 恢复后永久丢值。
+   * 重试经由 per-key operation queue，与推送和容灾检查保持同一串行顺序。
+   */
+  private _scheduleGrpcDeliveryRetry(key: string, state: GrpcFailoverState): void {
+    if (this._grpcDeliveryRetryTimers.has(key) || !state.pendingDelivery) {
+      return;
+    }
+    state.pendingDelivery.attempts += 1;
+    const delayMs = Math.min(
+      this.grpcDeliveryRetryBaseMs * Math.pow(2, state.pendingDelivery.attempts - 1),
+      this.grpcDeliveryRetryMaxMs);
+    const timer = setTimeout(() => {
+      this._grpcDeliveryRetryTimers.delete(key);
+      if (this._closed || !this._grpcOpQueue) {
+        return;
+      }
+      this._grpcOpQueue.run(key, () => this._retryGrpcDelivery(key, state)).catch(() => {});
+    }, delayMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    this._grpcDeliveryRetryTimers.set(key, timer);
+  }
+
+  private _clearGrpcDeliveryRetry(key: string): void {
+    const timer = this._grpcDeliveryRetryTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this._grpcDeliveryRetryTimers.delete(key);
+    }
+  }
+
+  /** 重放已拉取但尚未成功解密的推送内容；成功后才提交 content 并通知监听器。 */
+  private async _retryGrpcDelivery(key: string, state: GrpcFailoverState): Promise<void> {
+    if (!this._isGrpcStateActive(key, state)) {
+      return;
+    }
+    const pending = state.pendingDelivery;
+    if (!pending) {
+      return;
+    }
+    // 已切到容灾内容（local config wins）：服务端内容不再下发，丢弃待投递工作
+    if (state.useFailover) {
+      state.pendingDelivery = undefined;
+      return;
+    }
+    const listeners = this._grpcSubscribers ? this._grpcSubscribers.get(key) : undefined;
+    if (!listeners || listeners.length === 0) {
+      state.pendingDelivery = undefined;
+      return;
+    }
+    let plainContent: string;
+    try {
+      plainContent = await this.cipher.decryptIfNeeded(state.dataId, pending.content, pending.encryptedDataKey);
+    } catch (err) {
+      this.throwError(err);
+      if (this._isGrpcStateActive(key, state) && !state.useFailover) {
+        this._scheduleGrpcDeliveryRetry(key, state);
+      }
+      return;
+    }
+    if (!this._isGrpcStateActive(key, state) || state.useFailover) {
+      return;
+    }
+    state.pendingDelivery = undefined;
+    if (plainContent === state.content) {
+      return;
+    }
+    state.content = plainContent;
+    this._notifyGrpcListeners(this._grpcSubscribers ? this._grpcSubscribers.get(key) || [] : [], plainContent);
   }
 
   /**
@@ -788,6 +965,7 @@ export class DataClient extends Base implements BaseClient {
       if (state.useFailover) {
         try {
           const result = await this._getConfigWithCache(state.dataId, state.group);
+          const encryptedDataKey = result.encryptedDataKey;
           if (!this._isGrpcStateActive(key, state)) {
             return;
           }
@@ -797,12 +975,22 @@ export class DataClient extends Base implements BaseClient {
             return;
           }
           const content = result.content === null ? '' : result.content;
+          // 用户边界：切回服务端内容需解密后再对比 / 通知。解密失败（KMS 暂不可用）
+          // 时必须保留 failover 状态，否则下一轮 watcher 不再进入恢复分支，监听器会一直
+          // 停留在应急配置上；因此 failover 标记与新内容一起、仅在解密成功后提交。
+          const plainContent = await this.cipher.decryptIfNeeded(state.dataId, content, encryptedDataKey);
+          if (!this._isGrpcStateActive(key, state)) {
+            return;
+          }
           state.useFailover = false;
           state.failoverVersion = null;
-          if (content !== state.content) {
-            state.content = content;
+          // 服务端内容已成功下发，之前失败的推送工作不再需要
+          state.pendingDelivery = undefined;
+          this._clearGrpcDeliveryRetry(key);
+          if (plainContent !== state.content) {
+            state.content = plainContent;
             const current = this._grpcSubscribers.get(key) || [];
-            this._notifyGrpcListeners(current, content);
+            this._notifyGrpcListeners(current, plainContent);
           }
         } catch (err) {
           this.throwError(err);
@@ -821,6 +1009,9 @@ export class DataClient extends Base implements BaseClient {
       }
       state.useFailover = true;
       state.failoverVersion = mtime;
+      // 容灾内容优先，之前未解密成功的服务端推送不再下发
+      state.pendingDelivery = undefined;
+      this._clearGrpcDeliveryRetry(key);
       if (content !== state.content) {
         state.content = content;
         const current = this._grpcSubscribers.get(key) || [];
