@@ -51,7 +51,7 @@ differences in language implementation specs. These specs are that record.
 | [Node.js SDK Implementation Spec](./en/sdk/sdk-nodejs-impl-spec.md) | Entry points, options, lifecycle, public API, error model, breaking changes. | Draft |
 | [Architecture Spec](./en/design/architecture-spec.md) | Layers, module boundaries, and mapping to Java responsibilities. | Draft |
 | [Code Style Spec](./en/design/code-style-spec.md) | Language, formatting, and code rules. | Draft |
-| Config Pipeline Spec | Fetch, cache, transform, and delivery boundaries; filter contract. | Planned |
+| [Config Pipeline Spec](./en/config/config-pipeline-spec.md) | Fetch, cache, transform, and delivery boundaries; filter contract. | Draft |
 | Naming Runtime Spec | Registration, subscription, service cache, and redo. | Planned |
 | Node.js Runtime Spec | Addressing, connection, ability negotiation, and auth. | Planned |
 | Test Design Spec | Test layers, scenario matrix, and release gates. | Planned |
