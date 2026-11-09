@@ -52,6 +52,7 @@ differences in language implementation specs. These specs are that record.
 | [Architecture Spec](./en/design/architecture-spec.md) | Layers, module boundaries, and mapping to Java responsibilities. | Draft |
 | [Code Style Spec](./en/design/code-style-spec.md) | Language, formatting, and code rules. | Draft |
 | [Config Pipeline Spec](./en/config/config-pipeline-spec.md) | Fetch, cache, transform, and delivery boundaries; filter contract. | Draft |
+| [KMS Encryption Plugin Spec](./en/config/kms-encryption-plugin-spec.md) | Aliyun KMS formats, data key rules, and failure classification. | Draft, completed with the KMS PR |
 | Naming Runtime Spec | Registration, subscription, service cache, and redo. | Planned |
 | Node.js Runtime Spec | Addressing, connection, ability negotiation, and auth. | Planned |
 | Test Design Spec | Test layers, scenario matrix, and release gates. | Planned |

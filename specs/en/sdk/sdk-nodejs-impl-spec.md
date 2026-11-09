@@ -262,7 +262,7 @@ These rows are the migration guide. Compatibility tests use 2.6.3 as their basel
 
 2.6.x has no config encryption. If a 2.7.x release adds KMS over HTTP, its users must move to
 gRPC to keep KMS in 3.x, as the
-[Config Pipeline Spec](../config/config-pipeline-spec.md#13-transport-and-decrypt-fallback)
+[Config Pipeline Spec](../config/config-pipeline-spec.md#13-transport)
 explains.
 
 Behavior that stays the same as 2.6.x: `publishSingle` and `remove` resolve `true` and reject

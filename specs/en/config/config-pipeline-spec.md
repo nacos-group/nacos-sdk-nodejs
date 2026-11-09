@@ -51,9 +51,9 @@ Failover file ─────────┘
 
 Two rules hold across the stages:
 
-- **Everything before Transform uses raw content.** For an encrypted config, raw
-  content is the ciphertext and its `encryptedDataKey`. Listen md5 values, snapshot
-  files, and change detection all use raw content.
+- **Everything before Transform uses raw content.** Raw content is what the server stores,
+  with its `encryptedDataKey` if there is one. Listen md5 values, snapshot files, and change
+  detection all use raw content.
 - **Transformed content is never stored.** It exists only while one read or one
   delivery attempt runs. It is not written to disk or kept on the cache entry.
 
@@ -242,8 +242,8 @@ Delivery runs for an entry whenever a listener is due.
 4. Call each listener that is still due and has no callback in progress.
 5. Record each outcome, as defined in section 9.2.
 
-The filter runs once per attempt, not once per listener as in Java. KMS calls then
-scale with config versions, not with listeners.
+The filter runs once per attempt, not once per listener as in Java. Filter calls, which may
+reach a remote service, then scale with attempts, not with listeners.
 
 Filters do not run inside the per-key queue. A slow or hanging filter must not delay
 a newer version or a failover switch. A newer `version` starts its own attempt, and
@@ -359,28 +359,33 @@ callbacks do not.
 
 ## 11. Encryption
 
-Config encryption is a `ConfigFilter`. It is not a separate path, and the pipeline
-has no knowledge of KMS.
+Config encryption is a `ConfigFilter`, not a separate path. The pipeline has no knowledge of
+any encryption plugin, its formats, or its provider. It gives every encryption filter the same
+guarantees:
 
-| Direction | Hook | Behavior |
-| --- | --- | --- |
-| Publish | `onPublish` | For a `cipher-` dataId, encrypts `content` and sets `encryptedDataKey`. |
-| Read and delivery | `onResponse` | For a `cipher-` dataId, decrypts `content` with `encryptedDataKey`. |
+- **One record.** Content and an optional `encryptedDataKey` travel and persist together, from
+  every source. A reader never pairs them across versions, as section 5 requires.
+- **Raw state.** Listen md5 values and snapshots use the raw content.
+- **Opaque metadata.** The pipeline never infers plaintext, chooses an algorithm, rejects a
+  record, or skips filters because of the source, the `dataId`, or a missing
+  `encryptedDataKey`. A missing data key proves neither plaintext nor invalid ciphertext.
+- **One filter path.** Every selected record that is not `null`, from the server, a snapshot,
+  or a failover file, goes through `onResponse` the same way.
+- **One failure contract.** A filter fails by throwing, and marks the failure with `retryable`.
+  The pipeline does not interpret provider errors.
+- **Publish.** `onPublish` may set `content` and `encryptedDataKey`. The pipeline sends them
+  unchanged.
+- **No dependency.** The pipeline and its tests run without any encryption plugin installed.
 
-Rules for the filter:
-
-- A `failover` record with no `encryptedDataKey` is plaintext. The filter returns it
-  unchanged, and makes no KMS call. Emergency config never waits for KMS.
-- A `server` or `snapshot` record with no `encryptedDataKey` fails with
-  `retryable: false`. Ciphertext is never delivered as if it were plaintext.
-- A KMS outage fails as retryable.
-
-The rest of the KMS design follows in its own PR.
+The Aliyun KMS rules, including `cipher-` prefixes, envelope and direct modes, data key
+validation, and failover handling, are in the
+[KMS Encryption Plugin Spec](./kms-encryption-plugin-spec.md).
 
 ## 12. Required Behavior
 
-These cases come from the review of #157. The Test Design Spec turns them into
-scenarios, for plain and `cipher-` dataIds.
+These cases come from the review of #157. The Test Design Spec turns them into scenarios.
+They use stub filters, which accept records with and without `encryptedDataKey`, pass
+content through, or fail asynchronously. They need no encryption plugin.
 
 | Case | Expected result | Rule |
 | --- | --- | --- |
@@ -396,6 +401,9 @@ scenarios, for plain and `cipher-` dataIds.
 | Removing one listener during a retry | Others still recover. | 9.3, 10 |
 | Removing the last listener, or `close()`, during a retry | Timers are cleared and late results are silent. | 10 |
 | Unsubscribe and subscribe again during a filter call | The new subscription gets the value exactly once. | 3, 10 |
+| Records with and without `encryptedDataKey`, from each source | The filter receives each record unchanged, and the pipeline rejects none of them by itself. | 11 |
+| Content and `encryptedDataKey` saved, then read from the snapshot | They come back as the same pair. | 5, 11 |
+| Filter fails asynchronously, from each source | No listener progress advances. | 9.2, 11 |
 | Two listeners, one rejects once, no new publish | The failed one receives the value on a retry. The other is not called again. | 9.2, 9.3 |
 | Same, with the filter failing first | Both receive the value once the filter recovers, and each exactly once. | 9.2, 9.3 |
 | Same, newer value before the retry | The failed listener receives only the newer value. | 9.1, 9.3 |
@@ -412,14 +420,9 @@ scenarios, for plain and `cipher-` dataIds.
 | Config changes between `''` and missing | Each change is delivered, as `''` and `null`. | 3, 9.6 |
 | Authorization rejected, failover file present | The failover content is served. | 4 |
 
-## 13. Transport And Decrypt Fallback
+## 13. Transport
 
-Both were agreed with the author of #157 in the review of #164.
-
-- **gRPC only.** HTTP is frozen in 3.x, so this pipeline and `addConfigFilter` exist on gRPC
-  only, and KMS does not work over HTTP. If a 2.7.x release adds KMS over HTTP, its users must
-  move to gRPC to keep KMS in 3.x, and the migration guide must say so.
-- **No plaintext fallback.** Java can return an in-memory plaintext copy when KMS decrypt
-  fails. This pipeline does not keep plaintext, as section 2 requires. A failed decrypt is
-  retried and reported, the application keeps the value it already has, and snapshot and
-  failover still serve reads.
+HTTP is frozen in 3.x, so this pipeline and `addConfigFilter` exist on gRPC only, and so does
+any encryption plugin. If a 2.7.x release adds KMS over HTTP, its users must move to gRPC to
+keep KMS in 3.x, and the migration guide must say so. The author of #157 agreed in the review
+of #164.
