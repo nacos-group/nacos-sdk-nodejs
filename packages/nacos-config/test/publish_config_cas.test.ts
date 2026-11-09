@@ -17,6 +17,7 @@
 
 import { ClientWorker, ServerListManager, Snapshot } from '../src';
 import { HttpAgent } from '../src/http_agent';
+import { createConfigCipher } from '../src/cipher';
 import { GrpcConfigProxy } from '../src/grpc_config_proxy';
 import { DataClient } from '../src/client';
 import { createDefaultConfiguration } from './utils';
@@ -121,6 +122,8 @@ describe('test/publish_config_cas.test.ts', () => {
         namespace: '',
         transport: 'http',
       } as any);
+      // cipher 只在 gRPC 模式由 DataClient 自己持有；本组用 HTTP client 模拟代理委托，补上真实 cipher
+      (client as any).cipher = createConfigCipher((client as any).configuration);
     });
 
     after(() => {
