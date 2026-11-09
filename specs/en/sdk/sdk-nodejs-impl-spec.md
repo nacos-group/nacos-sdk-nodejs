@@ -260,6 +260,11 @@ These rows are the migration guide. Compatibility tests use 2.6.3 as their basel
 | Authorization rejected on `getConfig`, snapshot present | Resolves the snapshot | Rejects. |
 | Option names | `serverList`, `ak`, `sk` on naming | Deprecated. See section 4. |
 
+2.6.x has no config encryption. If a 2.7.x release adds KMS over HTTP, its users must move to
+gRPC to keep KMS in 3.x, as the
+[Config Pipeline Spec](../config/config-pipeline-spec.md#13-transport-and-decrypt-fallback)
+explains.
+
 Behavior that stays the same as 2.6.x: `publishSingle` and `remove` resolve `true` and reject
 on failure, a new config listener receives the current value at once, a deleted config is
 delivered as `null`, and several instances of one service can be registered from one client.

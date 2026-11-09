@@ -240,6 +240,7 @@ Delivery runs for an entry whenever a listener is due.
 3. Check that the entry is active and its `version` is unchanged. If not, drop the
    result.
 4. Call each listener that is still due and has no callback in progress.
+5. Record each outcome, as defined in section 9.2.
 
 The filter runs once per attempt, not once per listener as in Java. KMS calls then
 scale with config versions, not with listeners.
@@ -256,40 +257,68 @@ finishes. This matches `inNotifying` in `CacheData`, which skips a busy listener
 tries again later. Pending work never accumulates per version.
 
 A callback is in progress until it returns. If it returns a `Promise`, it is in
-progress until that settles.
+progress until that settles. A listener never has two callbacks in progress.
 
 ### 9.2 Outcomes
 
+The success point matches Java `CacheData#safeNotifyListener`, where `lastCallMd5` is set
+only after `receiveConfigInfo` returns. A failed callback is not treated as a delivery,
+because the application may fail for a reason that goes away, such as a connection pool
+being rebuilt.
+
 | Outcome | `deliveredMd5` | Next step |
 | --- | --- | --- |
-| Callback returned or resolved | Set to the delivered `md5` | None |
-| Callback threw or rejected | Set to the delivered `md5` | Goes to `error`. Not retried. |
+| Callback returned, or its `Promise` fulfilled | Set to the delivered `md5` | None |
+| Callback threw, or its `Promise` rejected | Unchanged | Goes to `error`. The listener stays due and is retried. |
 | Retryable filter failure | Unchanged | Goes to `error`. Retried for the same `version`. |
 | Non-retryable filter failure | Unchanged | Goes to `error`. Retried only when `version` changes. |
 | Dropped as out of date | Unchanged | The current `version` has its own attempt. |
 
-Each listener runs independently. One that throws does not affect the others.
+`deliveredMd5` is set to the `md5` that the callback actually received, even if a newer
+`version` committed in the meantime. The listener is then due again for the newer one.
 
-Java leaves `lastCallMd5` unchanged when a callback throws, so it replays the
-callback on a later cycle. Node.js does not, for two reasons. A callback that always
-fails would otherwise trigger filter calls forever, and a callback error is an
-application bug that a retry cannot fix. The
-[Agent Watch contract](https://github.com/alibaba/nacos/blob/3.3.0/specs/en/client/runtime-push-reconnect-spec.md)
-has the same rule: an invoked callback that throws is not automatically replayed.
+A successful server query or filter run is not a delivery. Only the application's callback
+decides it, so server sync state and delivery progress stay separate, as section 3 requires.
+
+Each listener runs independently. One that fails does not affect the others, and a listener
+that succeeded is never called again because another one failed.
+
+Callbacks must tolerate being called again with the same value, because a failed callback
+may already have applied part of its work.
 
 ### 9.3 Retry
 
-Retry state is a property of the entry, not of a timer. An entry has at most one
-retry scheduled, and it applies to the current `version`.
+Retry state is a property of the entry, not of a timer. An entry has at most one retry
+scheduled. It exists while any listener is due and has no callback in progress, after a
+callback or filter failure.
 
 - The delay starts at 1 second, doubles, and is capped at 60 seconds.
-- The retry runs for every listener that is due at that moment, including listeners
-  added since the failure.
-- A new `version` cancels the retry and resets the delay.
+- A retry runs a new attempt for the current `version`, and calls only the listeners that
+  are due at that moment, including listeners added since the failure.
+- New content, deletion, and failover transitions commit a new `version`. That replaces the
+  pending work and resets the delay. Nothing older is retried.
 - Removing one listener leaves the retry in place for the others.
 - Removing the last listener, or calling `close()`, cancels it.
 
-### 9.4 First Delivery
+Java has no separate retry. Its listen loop calls `checkListenerMd5` about every 5 seconds,
+and that calls every listener that is still due. Node.js reaches the same success point, but
+schedules retries with backoff, so that a callback or filter that keeps failing does not run
+at a fixed rate.
+
+### 9.4 Callbacks That Never Settle
+
+A callback that never returns, or whose `Promise` never settles, stays in progress. It is not
+treated as a failure, so the listener is not called again while it is pending, and no other
+callback starts for it.
+
+- After 60 seconds the client emits one `error` with the code `NACOS_LISTENER_BLOCKED`. This
+  matches the 60-second `LongNotifyHandler` warning in Java.
+- Other listeners of the entry are unaffected.
+- If the callback settles later, its outcome is recorded as usual.
+- Unsubscribing the listener, or `close()`, stops tracking it. A later subscribe with the
+  same function is a new listener, and starts with no progress.
+
+### 9.5 First Delivery
 
 A new listener has no `deliveredMd5`, so it is due as soon as the record is known. It receives
 the current value without waiting for a change. If the config is missing, that value is
@@ -300,7 +329,7 @@ cached `md5`, and `getConfigAndSignListener` covers the initial read.
 
 Adding a listener never disturbs the progress of other listeners.
 
-### 9.5 Deletion And Empty Content
+### 9.6 Deletion And Empty Content
 
 A deleted config has `content: null`. Listeners receive `null`, as in Java and 2.6.x, and
 filters do not run.
@@ -317,7 +346,8 @@ from `null`, so a change between the two is delivered.
 | Unsubscribe, then subscribe again | Creates a new entry. Nothing from the old entry reaches the new one. |
 | `close()` | Cancels all work, stops all timers, aborts filters, and closes them. |
 
-An active callback cannot be stopped, but no further one starts.
+An active callback cannot be stopped, but no further one starts. When it settles, its outcome
+is discarded, so it cannot advance the progress of a later subscription.
 
 After every `await`, code checks that the client is open, that the entry is the same
 object, and that the listener is still registered. This is the rule in
@@ -358,7 +388,7 @@ scenarios, for plain and `cipher-` dataIds.
 | `S -> F1 -> F2 -> S` | Listener receives S, F1, F2, S. | 3.1, 7 |
 | `F` has the same md5 as `S` | No extra callback, and no stale marker. | 3.1 |
 | Failover removed, server down | `F` stays effective. Recovery happens once the server returns. | 7 |
-| Server config deleted during failover | After failover ends, the listener receives `null`. | 7, 9.5 |
+| Server config deleted during failover | After failover ends, the listener receives `null`. | 7, 9.6 |
 | Filter fails, second listener joins, filter recovers | Both listeners receive the value with no new publish. | 9.3 |
 | Slow filter for A, newer B commits | The listener receives B. A is dropped, in either completion order. | 9 |
 | Failed A, newer B with another data key | A's retry is cancelled, and the listener ends on B. | 9.3 |
@@ -366,18 +396,30 @@ scenarios, for plain and `cipher-` dataIds.
 | Removing one listener during a retry | Others still recover. | 9.3, 10 |
 | Removing the last listener, or `close()`, during a retry | Timers are cleared and late results are silent. | 10 |
 | Unsubscribe and subscribe again during a filter call | The new subscription gets the value exactly once. | 3, 10 |
-| One listener throws | Others receive the value. No filter retry follows. | 9.2 |
+| Two listeners, one rejects once, no new publish | The failed one receives the value on a retry. The other is not called again. | 9.2, 9.3 |
+| Same, with the filter failing first | Both receive the value once the filter recovers, and each exactly once. | 9.2, 9.3 |
+| Same, newer value before the retry | The failed listener receives only the newer value. | 9.1, 9.3 |
+| Same, config deleted before the retry | The failed listener receives `null`. | 9.3, 9.6 |
+| Same, failover appears before the retry | The failed listener receives `F`. | 7, 9.3 |
+| Same, failed listener removed before the retry | It is not called again, and the other listener is unaffected. | 9.3, 10 |
+| Same, `close()` before the retry | No callback. Timers are cleared. | 10 |
+| Listener fails every time | Retried with a delay capped at 60 seconds. Other listeners are not called again. | 9.3 |
+| Callback never settles | Not called again while pending. One `error` after 60 seconds. Others are unaffected. | 9.4 |
+| Callback settles after unsubscribe and subscribe again | Its outcome does not advance the new subscription. | 9.4, 10 |
 | Disconnect, config changes, reconnect | The listener receives the change. | 6 |
 | Snapshot write fails, then the server is down | The previous complete record is used. | 5 |
 | Server returns empty content, then is down after a restart | The empty string is served from the snapshot. | 4, 5 |
-| Config changes between `''` and missing | Each change is delivered, as `''` and `null`. | 3, 9.5 |
+| Config changes between `''` and missing | Each change is delivered, as `''` and `null`. | 3, 9.6 |
 | Authorization rejected, failover file present | The failover content is served. | 4 |
 
-## 13. Open Questions
+## 13. Transport And Decrypt Fallback
 
-- **HTTP transport:** The Node.js implementation spec freezes HTTP, so this pipeline
-  and `addConfigFilter` are gRPC only, and KMS would not work over HTTP in 3.x. #157
-  implements both transports. Confirm that gRPC only is acceptable.
-- **Decrypt fallback:** On a KMS decrypt failure, Java can fall back to an in-memory
-  plaintext cache. #157 does not, to avoid keeping plaintext in memory, and section 2
-  forbids it. Confirm with the KMS PR.
+Both were agreed with the author of #157 in the review of #164.
+
+- **gRPC only.** HTTP is frozen in 3.x, so this pipeline and `addConfigFilter` exist on gRPC
+  only, and KMS does not work over HTTP. If a 2.7.x release adds KMS over HTTP, its users must
+  move to gRPC to keep KMS in 3.x, and the migration guide must say so.
+- **No plaintext fallback.** Java can return an in-memory plaintext copy when KMS decrypt
+  fails. This pipeline does not keep plaintext, as section 2 requires. A failed decrypt is
+  retried and reported, the application keeps the value it already has, and snapshot and
+  failover still serve reads.
