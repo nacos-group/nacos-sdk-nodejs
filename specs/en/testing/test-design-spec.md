@@ -76,6 +76,12 @@ Base64 bug that made data unreadable in Java.
 Assertions check return values, callbacks, and remote side effects. Checking that nothing
 threw is not enough.
 
+A protocol response must be observed directly when the contract is about that response. A
+Naming push ACK, for example, is asserted from the outbound `NotifySubscriberResponse` on a
+controllable transport, including its type, request ID, and result. Callback counts do not
+prove an ACK, and an ACK does not prove a callback ran. A fake or in-process transport is
+allowed for this, as long as the public client is the code under test.
+
 ### 2.4 Package
 
 The test packs the package, installs the tarball into an empty project, and exercises each
@@ -87,6 +93,7 @@ file or dependency.
 | Job | Server | Auth | Transport | Purpose |
 | --- | --- | --- | --- | --- |
 | Unit and contract | None | - | - | Node.js 18, 20, 22, and 24. |
+| TLS fixture | In-process `@grpc/grpc-js` server with fixed certificates | - | gRPC over TLS | Real handshake, CA validation, hostname mismatch, and mTLS. Not a Nacos server. |
 | Integration 3.3.0 | 3.3.0 | On | gRPC | Main functional and auth suite. |
 | Integration 3.2.4 | 3.2.4 | Off | gRPC | Previous 3.x line. |
 | Integration 2.5.5 | 2.5.5 | Off | gRPC and HTTP | Lowest supported server, and the HTTP regression suite. |

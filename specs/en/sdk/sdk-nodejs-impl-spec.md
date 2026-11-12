@@ -135,6 +135,14 @@ migration only has to handle behavior changes.
 | `addConfigFilter(filter)` | `addConfigFilter` | Added in 3.0. See the [Config Pipeline Spec](../config/config-pipeline-spec.md#8-transform). |
 | `close()` | `shutDown` | See section 3. |
 
+`publishSingle`, `publishConfigCas`, and `remove` use the runtime replay policy in the
+[Runtime Spec](../client/nodejs-runtime-spec.md#35-requests). `publishSingle` and `remove`
+are content-idempotent. `publishConfigCas` is not: if an attempt applied the write but its
+response was lost, a retry compares the now-stale `casMd5` and resolves `false`. That is the
+same observable result as a genuine conflict, and it matches Java. A caller that must
+distinguish the two reads the config back. A server rejection that is not an md5 conflict
+still rejects.
+
 ### 5.2 `NacosNamingClient`
 
 | Method | Java | Result |
@@ -150,6 +158,9 @@ migration only has to handle behavior changes.
 | `unSubscribe(info, listener?)` | `unsubscribe` | Removes the listener, or all listeners when none is given. |
 | `getServerStatus()` | `getServerStatus` | `UP` or `DOWN`. |
 | `close()` | `shutDown` | See section 3. |
+
+`getServerStatus()` checks the current connection and does not create one. After `close()`
+it rejects with `NacosConnectionError`, like any other call after close.
 
 ### 5.3 Legacy Config APIs
 
