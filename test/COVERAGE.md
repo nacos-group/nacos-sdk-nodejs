@@ -31,10 +31,10 @@ Update this file in the same PR as any change to the public surface.
 | `getConfig` | CFG-01, CFG-02, CFG-04, CFG-05, CFG-06, CFG-07, CFG-08, CFG-09, CFG-10, BND-01, AUTH-05, AUTH-06 |
 | `subscribe` | CFG-11, CFG-12, CFG-20, CFG-25, CFG-33, CFG-35, CFG-36, CFG-37, CFG-38, CFG-39, CFG-49, CFG-50, CFG-51, CFG-52, CFG-56, CFG-57 |
 | `unSubscribe` | CFG-29, CFG-30, CFG-31, CFG-53, CFG-54, CFG-58 |
-| `publishSingle` | CFG-01, ERR-01, CON-15, BND-01, AUTH-07 |
-| `publishConfigCas` | ERR-03, CON-15 |
-| `remove` | CFG-02, CFG-03, ERR-02, AUTH-07 |
-| `addConfigFilter` | CFG-40, CFG-41, CFG-42, CFG-43, CFG-44, CFG-45, CFG-46, CFG-47, CFG-59, CFG-60, CFG-61 |
+| `publishSingle` | CFG-01, ERR-01, CON-19, CON-20, BND-01, AUTH-07 |
+| `publishConfigCas` | ERR-03, CON-19, CON-20 |
+| `remove` | CFG-02, CFG-03, ERR-02, CON-19, AUTH-07 |
+| `addConfigFilter` | CFG-40, CFG-41, CFG-42, CFG-43, CFG-44, CFG-45, CFG-46, CFG-47, CFG-59, CFG-60, CFG-61, CFG-68 |
 | `close()` | LC-05, LC-06, LC-07, CFG-30, CFG-46, CFG-55 |
 | `getCurrentUnit`, `getAllUnits`, `publishToAllUnit`, `removeToAllUnit`, `getConfigs`, `batchGetConfig`, `batchQuery`, `publishAggr`, `removeAggr` | ERR-04, HTTP-02 |
 
@@ -44,16 +44,16 @@ Update this file in the same PR as any change to the public surface.
 | --- | --- |
 | `new NacosNamingClient()` | LC-01, LC-08, BND-02, BND-05 |
 | `ready()` | LC-02, LC-03, AUTH-04 |
-| `registerInstance` | NAM-01, NAM-10, NAM-12, NAM-15, NAM-16, NAM-17, NAM-18, NAM-19, BND-03 |
-| `deregisterInstance` | NAM-11, NAM-20, NAM-21, NAM-22, NAM-23, NAM-24, NAM-25, NAM-26, NAM-27, NAM-29, NAM-33 |
-| `batchRegisterInstance` | NAM-13, BND-04 |
-| `batchDeregisterInstance` | NAM-14, NAM-28, BND-04 |
-| `getAllInstances` | NAM-01, NAM-04, NAM-05, NAM-06, NAM-31 |
+| `registerInstance` | NAM-01, NAM-10, NAM-12, NAM-15, NAM-16, NAM-17, NAM-18, NAM-19, NAM-59, NAM-60, NAM-61, CON-15, BND-03 |
+| `deregisterInstance` | NAM-11, NAM-20, NAM-21, NAM-22, NAM-23, NAM-24, NAM-25, NAM-26, NAM-27, NAM-29, NAM-33, NAM-61, NAM-72 |
+| `batchRegisterInstance` | NAM-13, NAM-61, BND-04 |
+| `batchDeregisterInstance` | NAM-14, NAM-28, NAM-61, BND-04 |
+| `getAllInstances` | NAM-01, NAM-04, NAM-05, NAM-06, NAM-31, NAM-62, NAM-63, NAM-65 |
 | `selectInstances` | NAM-03, NAM-31 |
-| `selectOneHealthyInstance` | NAM-03 |
-| `subscribe` | NAM-02, NAM-40, NAM-42, NAM-43, NAM-44, NAM-46 |
-| `unSubscribe` | NAM-41, NAM-45 |
-| `getServerStatus` | LC-02 |
+| `selectOneHealthyInstance` | NAM-03, NAM-71 |
+| `subscribe` | NAM-02, NAM-40, NAM-42, NAM-43, NAM-44, NAM-46, NAM-62, NAM-64, NAM-66, NAM-67, NAM-68, NAM-69, NAM-70 |
+| `unSubscribe` | NAM-41, NAM-45, NAM-62, NAM-64, NAM-70 |
+| `getServerStatus` | LC-02, CON-22 |
 | `close()` | LC-05, LC-06, LC-07, NAM-57, NAM-58 |
 
 ## Options
@@ -82,8 +82,8 @@ Update this file in the same PR as any change to the public surface.
 | `NacosAuthError` | AUTH-04, AUTH-05, AUTH-06, CFG-09 |
 | `NacosValidationError` | BND-01, BND-03, BND-04 |
 | `NacosUnsupportedError` | ERR-04, HTTP-03 |
-| `error` event | ERR-06, LC-04, AUTH-12, NAM-46 |
-| `localRead` event | CFG-04, CFG-07 |
+| `error` event | ERR-06, LC-04, AUTH-12, NAM-46, NAM-68, CFG-64, CFG-65 |
+| `localRead` event | CFG-04, CFG-07, CFG-62, CFG-63, LC-04 |
 | `redoPending`, `redoRestored` events | NAM-55 |
 
 ## Entry Points
@@ -103,13 +103,16 @@ These scenarios have no single public method. They cover behavior that every cal
 | --- | --- |
 | Handshake and abilities | CON-01, CON-02, CON-03, CON-04, CON-16 |
 | Reconnect and health | CON-09, CON-10, CON-11, CON-12, CON-17 |
+| Request replay policy | CON-14, CON-15, CON-19, CON-20, CON-21 |
+| TLS handshake | CON-18 |
 | Login and token refresh | AUTH-02, AUTH-03, AUTH-08, AUTH-09, AUTH-10, AUTH-11, AUTH-13, AUTH-17 |
 | Error model | ERR-05, ERR-07 |
 | Wire compatibility | WIRE-02, WIRE-03 |
-| Config sync and delivery | CFG-14, CFG-17, CFG-18, CFG-19, CFG-21, CFG-22, CFG-24, CFG-26, CFG-27, CFG-28, CFG-34, CFG-48 |
+| Config sync and delivery | CFG-14, CFG-17, CFG-18, CFG-19, CFG-21, CFG-22, CFG-24, CFG-26, CFG-27, CFG-28, CFG-34, CFG-48, CFG-62, CFG-63, CFG-64, CFG-65, CFG-66, CFG-67 |
 | Encryption plugin | ENC-01, ENC-02, ENC-03, ENC-04, ENC-05, ENC-06, ENC-07, ENC-08, ENC-09 |
 | Naming cache | NAM-30, NAM-32 |
-| Naming redo | NAM-50, NAM-51, NAM-52, NAM-53, NAM-54, NAM-56 |
+| Naming selection | NAM-03, NAM-71 |
+| Naming redo | NAM-50, NAM-51, NAM-52, NAM-53, NAM-54, NAM-56, NAM-59, NAM-60, NAM-61, NAM-63 |
 | Client isolation | ISO-02, ISO-03, ISO-05, ISO-06 |
 | Packaging | PKG-03, PKG-05, PKG-06, PKG-08 |
 | Migration from 2.6.x | MIG-01, MIG-02, MIG-03, MIG-04, MIG-05, MIG-06, MIG-07 |

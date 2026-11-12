@@ -36,7 +36,7 @@ and the status values.
 | LC-01 | Invalid options | The constructor throws. | U | beta | Impl 3 | Pending |
 | LC-02 | Server available | `ready()` resolves for both clients. | I | beta | Impl 3 | Partial |
 | LC-03 | Naming, server unreachable | `ready()` rejects. | U | beta | Impl 3.1 | Pending |
-| LC-04 | Config, server unreachable | `error` is emitted, `ready()` resolves, and the snapshot is served. | U | beta | Impl 3.1 | Pending |
+| LC-04 | Config, server unreachable | `error` is emitted, `ready()` resolves, and the snapshot is served to `getConfig` and to a new listener. | U | beta | Impl 3.1 | Pending |
 | LC-05 | `close()` twice | The second call has no effect. | U | beta | Impl 3 | Pending |
 | LC-06 | Calls after `close()` | Requests reject and no listener is called. | U | beta | Impl 3 | Partial |
 | LC-07 | Exit after `close()` | The process exits with no open handles. | P | beta | Runtime 7 | Pending |
@@ -59,7 +59,7 @@ and the status values.
 | --- | --- | --- | --- | --- | --- | --- |
 | ERR-01 | `publishSingle`, non-200 response | Rejects with `NacosServerError`. | U | beta | Impl 5.1 | Pending |
 | ERR-02 | `remove`, non-200 response | Rejects with `NacosServerError`. | U | beta | Impl 5.1 | Pending |
-| ERR-03 | `publishConfigCas` | `false` on md5 conflict. Any other failure rejects. | U, I | beta | Impl 5.1 | Partial |
+| ERR-03 | `publishConfigCas` | Correct MD5 resolves `true` and the server content changes. Stale MD5 resolves `false` and the server content is unchanged. Any other failure rejects. | U, I | beta | Impl 5.1 | Partial |
 | ERR-04 | Legacy config APIs on gRPC | Each rejects with `NacosUnsupportedError`. | U | beta | Impl 5.3 | Pending |
 | ERR-05 | Failed response | Never becomes success, empty data, or a timeout. | U | beta | Impl 6 | Pending |
 | ERR-06 | Background failure, no `error` listener | The process does not crash. | U | beta | Impl 6 | Pending |
@@ -80,14 +80,18 @@ and the status values.
 | CON-08 | `endpoint` and `serverAddr` set | `endpoint` wins. | U | beta | Runtime 2 | Pending |
 | CON-09 | Reconnect delay | Rotates servers, doubles to 60 seconds, and resets on success. | U | beta | Runtime 3.2 | Pending |
 | CON-10 | `ConnectResetRequest` | It is acknowledged, and a listed target is tried first. | U | beta | Runtime 3.2 | Pending |
-| CON-11 | Error `301` | Triggers reconnect. | U | beta | Runtime 3.2 | Pending |
+| CON-11 | Error `301` | Triggers reconnect, selects the next server, and retries the request within the budget. If it still fails, Naming intent remains. | U | beta | Runtime 3.2, 3.5 | Pending |
 | CON-12 | Half-open connection | The health check fails and the client reconnects. | U | beta | Runtime 3.3 | Pending |
 | CON-13 | Request during an outage | Waits until `requestTimeout`, then `NacosConnectionError`. | U | beta | Runtime 3.5 | Pending |
-| CON-14 | Connection drops with a request in flight | Rejects with `NACOS_CONNECTION_LOST`. | U | beta | Impl 6 | Pending |
-| CON-15 | Sent write times out | `NacosTimeoutError`, and it is sent exactly once. | U | beta | Runtime 3.5 | Pending |
+| CON-14 | Connection drops with a request in flight | The runtime makes its bounded attempts; if they are exhausted, the call rejects with `NACOS_CONNECTION_LOST` as a result-unknown failure. | U | beta | Runtime 3.5 | Pending |
+| CON-15 | Naming registration times out | The runtime makes the bounded attempts, the call rejects as result unknown, and the latest Naming intent stays for redo. | U | beta | Runtime 3.5, Naming 2.3 | Pending |
 | CON-16 | Reconnect resets abilities | No value carries over. | U | beta | Runtime 4 | Pending |
 | CON-17 | Server restart | The original clients recover. | R | rc | Runtime 3.2 | Pending |
-| CON-18 | TLS with a private CA and with a client certificate | Connects. A TLS mismatch is `NacosConnectionError`. | U | rc | Runtime 6 | Pending |
+| CON-18 | TLS with a private CA and with a client certificate | A real `@grpc/grpc-js` TLS fixture accepts a trusted CA and a valid client certificate; an untrusted CA, a hostname mismatch, and a missing or wrong client certificate map to `NacosConnectionError` and clean up the connection. | U, I | rc | Runtime 6 | Pending |
+| CON-19 | Config write replay policy | A publish/cas that fails with a connection failure or unknown result is retried within the budget. A CAS retry after an applied write may return `false`; this false negative is asserted as the documented Java-compatible boundary. | U | beta | Runtime 3.5, Impl 5.1 | Pending |
+| CON-20 | Server `ErrorResponse` | The request is retried within the budget, then the call rejects with the server error. Attempt count and final error are asserted. | U | beta | Runtime 3.5 | Pending |
+| CON-21 | Read retry | A Config query and a Naming query retry on a connection-class failure within the budget and succeed when a later attempt succeeds. | U | beta | Runtime 3.5 | Pending |
+| CON-22 | `getServerStatus()` | Reports UP and DOWN during normal operation, an outage, and recovery, and follows the public contract after `close()`. Querying status does not create a connection. | U, R | rc | Impl 5.2 | Pending |
 
 ## Authentication
 
@@ -120,7 +124,7 @@ rc. Without that, release notes must say that only signature vectors were tested
 | --- | --- | --- | --- | --- | --- | --- |
 | WIRE-01 | Request and response JSON | Matches vectors generated by Java. | W | beta | Test 2.2 | Pending |
 | WIRE-02 | Fields that default to `false` or `true` | `healthy` and `enabled` survive the codec. | W | beta | Test 2.2 | Pending |
-| WIRE-03 | Type registry | Every request and response in use is registered, including `PersistentInstanceRequest` and `BatchInstanceRequest`. | W | beta | Runtime 3.1 | Pending |
+| WIRE-03 | Type registry | Every request and response in use is registered, including `PersistentInstanceRequest`, `BatchInstanceRequest`, and `NotifySubscriberResponse`. | W | beta | Runtime 3.1 | Pending |
 | WIRE-04 | AK/SK signatures | Match fixed vectors. | W | beta | Runtime 5.3 | Pending |
 
 ## Config
@@ -160,7 +164,7 @@ rc. Without that, release notes must say that only signature vectors were tested
 | CFG-31 | Unsubscribe and subscribe during a filter call | The new subscription gets the value exactly once. | U | rc | Config 12 | Pending |
 | CFG-32 | One listener throws | Others receive the value. The failed one stays due. | U | rc | Config 9.2 | Partial |
 | CFG-35 | Two listeners, one rejects once, no new publish | The failed one receives the value on a retry. The other is not called again. | U | rc | Config 9.3 | Pending |
-| CFG-36 | Same, with the filter failing first | Both receive the value once the filter recovers, each exactly once. | U | rc | Config 9.3 | Pending |
+| CFG-36 | Same, with the filter failing first | Two cases. (a) The filter fails once and recovers; both callbacks succeed and each is invoked once. (b) The filter fails, then L1 rejects once and succeeds on retry; L1 is invoked twice and succeeds once, L2 is invoked once and succeeds once. Invocations and successful deliveries are counted separately. | U | rc | Config 9.3 | Pending |
 | CFG-37 | Same, newer value before the retry | The failed listener receives only the newer value. | U | rc | Config 9.3 | Pending |
 | CFG-38 | Same, config deleted before the retry | The failed listener receives `null`. | U | rc | Config 9.3 | Pending |
 | CFG-39 | Same, failover appears before the retry | The failed listener receives `F`. | U | rc | Config 9.3 | Pending |
@@ -176,18 +180,25 @@ rc. Without that, release notes must say that only signature vectors were tested
 | CFG-47 | Non-retryable filter failure | No retry until `version` changes. | U | rc | Config 9.2 | Pending |
 | CFG-48 | Retry delay | Starts at 1 second, caps at 60 seconds, and resets on a new `version`. | U | rc | Config 9.3 | Pending |
 | CFG-49 | Listener busy, versions change | It receives only the latest when it finishes. | U | rc | Config 9.1 | Pending |
-| CFG-50 | New listener, config exists | Receives the current value. Others are undisturbed. | U | rc | Config 9.5 | Partial |
-| CFG-51 | New listener, no config | Receives `null` once. If the query failed, it is not called. | U | rc | Config 9.5 | Pending |
+| CFG-50 | New listener, existing entry | Receives the current value without a new read. Others are undisturbed. | U | rc | Config 9.5 | Partial |
+| CFG-51 | New listener, server confirms the config is missing | Receives `null` once, and no filter runs. A network failure with no snapshot is covered by CFG-64. | U | rc | Config 9.5 | Pending |
 | CFG-52 | Config deleted | Listeners receive `null`. No filter runs. | U | rc | Config 9.6 | Pending |
 | CFG-53 | Remote add and remove for one key | Reach the server in order. | U | rc | Config 10 | Partial |
 | CFG-54 | Failed listener removed before the retry | It is not called again, and the other listener is unaffected. | U | rc | Config 9.3 | Pending |
 | CFG-55 | `close()` before a listener retry | No callback. Timers are cleared. | U | rc | Config 10 | Pending |
 | CFG-56 | Listener fails every time | Retried with a delay capped at 60 seconds. Other listeners are not called again. | U | rc | Config 9.3 | Pending |
-| CFG-57 | Callback never settles | Not called again while pending. One `NACOS_LISTENER_BLOCKED` error after 60 seconds. Others are unaffected. | U | rc | Config 9.4 | Pending |
+| CFG-57 | Callback never settles, with a schedulable event loop | Not called again while the pending Promise is unsettled. One `NACOS_LISTENER_BLOCKED` error after 60 seconds. Others are unaffected. Synchronously blocking application code is not covered by this guarantee. | U | rc | Config 9.4 | Pending |
 | CFG-58 | Callback settles after unsubscribe and subscribe again | Its outcome does not advance the new subscription. | U | rc | Config 9.4 | Pending |
 | CFG-59 | Stub filter, records with and without `encryptedDataKey`, from each source | Each reaches the filter unchanged. The pipeline rejects none by itself. | U | rc | Config 11 | Pending |
 | CFG-60 | Content and `encryptedDataKey` saved, then read from the snapshot | They come back as the same pair. | U | rc | Config 11 | Pending |
 | CFG-61 | Stub filter fails asynchronously, from each source | No listener progress advances. | U | rc | Config 11 | Pending |
+| CFG-62 | New listener, failover file exists | The failover content is effective, filters run, the listener receives it once, and `localRead` is emitted once. | U | rc | Config 9.5 | Pending |
+| CFG-63 | New listener, network fails, snapshot present | The snapshot is effective, filters run, the listener receives it once, and `localRead` is emitted. After recovery the server value is committed and delivered when it differs. | U, R | rc | Config 9.5 | Pending |
+| CFG-64 | New listener, network fails, no snapshot | The listener is not called and the failure goes to `error`. On connect or periodic sync the entry is queried directly; the first successful query delivers the first callback. | U, R | rc | Config 6, 9.5 | Pending |
+| CFG-65 | New listener, 401 or 403, snapshot present | The snapshot is not used, the listener is not called, and the failure goes to `error`. | U | rc | Config 9.5 | Pending |
+| CFG-66 | New listener, 401 or 403, failover present | The failover content is effective, filters run, and the listener receives it once. | U | rc | Config 9.5 | Pending |
+| CFG-67 | New listener, server returns empty content | The listener receives `''` once, filters run, and it is distinct from `null`. | U | rc | Config 9.5 | Pending |
+| CFG-68 | Stub filter `onPublish` for publish and CAS | The transformed content and optional metadata are what `publishSingle` and `publishConfigCas` send. The CAS comparison value is unchanged, and a filter failure sends no request. | U, I | rc | Config 8 | Pending |
 
 ## Encryption
 
@@ -223,27 +234,27 @@ These are plugin tests. The pipeline itself is tested with stub filters in CFG-5
 | NAM-15 | Concurrent calls for one service | Run in order, and the final set is correct. | U | rc | Naming 2.2 | Pending |
 | NAM-16 | Persistent instance | The server shows `ephemeral=false`, and it survives `close()`. | I | rc | Naming 2.1 | Pending |
 | NAM-17 | Persistent instance, ability absent | Goes over HTTP. | U | rc | Naming 2.1 | Pending |
-| NAM-18 | Register rejected by the server | The call rejects, the set is restored, and redo does not retry. | U | rc | Naming 2.3 | Pending |
-| NAM-19 | Register fails, connection down | The call rejects, and redo registers after reconnect. | U | rc | Naming 2.3 | Pending |
+| NAM-18 | Register rejected by the server | The call rejects, the latest intent stays, and redo retries later. | U | rc | Naming 2.3, 6.2 | Pending |
+| NAM-19 | Register fails, connection down | The call rejects, the latest intent stays, and redo registers after reconnect. | U | rc | Naming 2.3 | Pending |
 | NAM-20 | Deregister a missing instance | Succeeds. | I | rc | Naming 2.4 | Pending |
 | NAM-21 | Deregister during an outage | The instance is gone after reconnect. | U, R | rc | Naming 2.4 | Pending |
 | NAM-22 | Deregister an ephemeral instance | It is gone, and the record is removed. | I | rc | Naming 2.4 | Pending |
 | NAM-23 | Deregister a persistent instance | Uses the persistent path, not `InstanceRequest`. | I | rc | Naming 2.4 | Pending |
 | NAM-24 | Deregister a persistent instance, ability absent | Goes over HTTP. | U | rc | Naming 2.1 | Pending |
-| NAM-25 | Deregister rejected by the server | The call rejects, the instance stays in the desired set, and redo does not retry. | U | rc | Naming 2.4 | Pending |
-| NAM-26 | Deregister fails on a live connection | The call rejects, and redo retries until confirmed. | U | rc | Naming 2.4 | Pending |
+| NAM-25 | Deregister rejected by the server | The call rejects, the unregistered intent stays, and redo never re-registers the removed instance. | U | rc | Naming 2.4, 6.2 | Pending |
+| NAM-26 | Deregister fails on a live connection, from a confirmed registration | The call rejects, redo retries until confirmed, and the eventual remote state is checked. | U | rc | Naming 2.4 | Pending |
 | NAM-27 | Disconnect during deregistration | The instance is not registered again after reconnect. | U, R | rc | Naming 2.4 | Pending |
 | NAM-28 | Remove one member after a batch, then reconnect | The others return, and the removed one does not. | U, R | rc | Naming 2.4 | Pending |
-| NAM-29 | Persistent deregistration fails | The call rejects, and nothing is replayed. | U | rc | Naming 2.4 | Pending |
+| NAM-29 | Persistent deregistration fails | The call rejects, and nothing is replayed. Bounded request retry does not introduce redo or reconnect replay. | U | rc | Naming 2.4 | Pending |
 | NAM-33 | Register again during a pending removal | The instance stays registered. | U | rc | Naming 2.4 | Pending |
-| NAM-30 | Invalid view, `hosts` missing | Ignored. | U | rc | Naming 4 | Pending |
+| NAM-30 | Invalid view, `hosts` missing | Ignored, with a success ACK. | U | rc | Naming 4.1 | Pending |
 | NAM-31 | Cluster filter | Filters locally for reads and listeners. | U | rc | Naming 4 | Pending |
 | NAM-32 | No polling on gRPC | No periodic query. | U | rc | Naming 4 | Pending |
 | NAM-40 | Two listeners on one service | One server subscription. | U | rc | Naming 5 | Pending |
 | NAM-41 | Last listener removed | One unsubscribe request. | U | rc | Naming 5 | Pending |
 | NAM-42 | New listener | Receives the current view once, including an empty one. | U | rc | Naming 5 | Pending |
 | NAM-43 | Other cluster changes | A filtered listener is not called. | U | rc | Naming 5 | Pending |
-| NAM-44 | Listener throws | Others still run. No retry. | U | rc | Naming 5 | Pending |
+| NAM-44 | Listener throws | Others still run, the ACK is still sent, the cache is not rolled back, and there is no retry. | U | rc | Naming 5 | Pending |
 | NAM-45 | After `unSubscribe` or `close()` | The listener is not called. | U | rc | Naming 5 | Pending |
 | NAM-46 | Subscribe request fails | `error` is emitted, and redo retries. | U | rc | Naming 5 | Pending |
 | NAM-50 | Reconnect with instances and subscriptions | All are restored. | U, R | rc | Naming 6 | Pending |
@@ -255,6 +266,20 @@ These are plugin tests. The pipeline itself is tested with stub filters in CFG-5
 | NAM-56 | Persistent instance on reconnect | Not re-registered. | U | rc | Naming 6 | Pending |
 | NAM-57 | `close()` during redo | Timers stop, and no late callback. | U | rc | Naming 7 | Pending |
 | NAM-58 | `close()` | Sends no deregister request. | U | rc | Naming 7 | Pending |
+| NAM-59 | Invalid local arguments | Rejected before any intent is recorded or request is sent. No redo record is created. | U | rc | Naming 2 | Pending |
+| NAM-60 | Register fails, then connectivity or permissions recover | The call rejects, the intent stays, and redo registers the instance later. | U, R | rc | Naming 2.3, 6.2 | Pending |
+| NAM-61 | Batch and ordering | Single → multiple → one → empty; a failed batch; deregister then register; late response from an old epoch. Both completion orders end at the latest intent and the correct members. | U | rc | Naming 2.3, 2.4, 2.2 | Pending |
+| NAM-62 | `getAllInstances → subscribe(L) → unSubscribe(L) → getAllInstances` | Discovery subscribes, the listener reuses the subscription, the last removal unsubscribes but keeps the cache, and the final discovery re-establishes the subscription; a later service change reaches the listener again. | U, I | rc | Naming 3, 5 | Pending |
+| NAM-63 | Resubscription fails | With a cached view the allowed view is returned; with no cache the call rejects. Both keep the recovery intent and see new data after recovery. | U, R | rc | Naming 3, 5 | Pending |
+| NAM-64 | Multiple cluster-filtered listeners | One server subscription; removing one listener keeps the others subscribed and notified. | U | rc | Naming 5 | Pending |
+| NAM-65 | `subscribe: false` | Queries the server without creating a lasting subscription and without disturbing an existing listener subscription. | U | rc | Naming 3 | Pending |
+| NAM-66 | Normal valid push | The view is accepted, the cache is updated, notification is scheduled, and the outbound `NotifySubscriberResponse` is observed with its type, request ID, and result. Encoding is checked with a fixed vector. | U, W, I | rc | Naming 4.1, 5 | Pending |
+| NAM-67 | Listener returns a pending Promise | The ACK is sent and the accepted cache is readable while the Promise is unsettled. Later settle or reject does not change or repeat that ACK. | U | rc | Naming 5 | Pending |
+| NAM-68 | Listener throws or rejects | The ACK is sent, the failure goes to `error`, the accepted cache is not rolled back, and Config-style retry is not introduced. | U | rc | Naming 5 | Pending |
+| NAM-69 | Duplicate push, malformed view, stale epoch, push after unsubscribe | Each case follows section 4.1; a decoded view gets a success ACK, and no removed listener starts a new callback. | U | rc | Naming 4.1, 5 | Pending |
+| NAM-70 | Unsubscribe fails, resubscribe before the old unsubscribe completes, a late cleanup or redo response, `close()`, or unsubscribe during dispatch | Both completion orders; the latest intent wins, old work does not advance the new subscription, no removed listener starts a callback, and no write is required on an already closed stream. | U | rc | Naming 5 | Pending |
+| NAM-72 | Registration may have applied without a confirmed response, then deregistration fails | The direct deregistration is attempted, and the documented Java-compatible state transitions occur. No stronger surviving-connection cleanup guarantee is asserted. | U | rc | Naming 2.4, 6.2 | Pending |
+| NAM-71 | `selectOneHealthyInstance` boundaries | No eligible instance returns `null`; one eligible instance returns it; weighted selection uses controlled randomness at the weight boundaries. | U | beta | Impl 5.2 | Pending |
 
 ## Client Isolation
 
@@ -299,7 +324,7 @@ These scenarios use released 2.6.3 as the baseline, not `master`.
 | PKG-02 | Types with `moduleResolution` `node` and `node16` | Compile. | P | beta | Impl 2 | Pending |
 | PKG-03 | Internal paths | Not reachable through `exports`. | P | beta | Arch 3 | Pending |
 | PKG-04 | Install from the tarball, no workspace | No missing file or dependency. | P | beta | Impl 2 | Pending |
-| PKG-05 | Node.js older than 18 | `engines` rejects it. | P | beta | Impl 2 | Pending |
+| PKG-05 | Node.js outside the declared range | The declared `engines` range covers the supported versions, and an `engine-strict` fixture rejects installing on an older Node. Default-install behavior is unchanged. | P | beta | Impl 2 | Pending |
 | PKG-06 | `@nacos-group/sdk-proto` | Is a regular pinned dependency, and a missing codec fails at load. | P | beta | Impl 2 | Pending |
 | PKG-07 | Bridges `nacos`, `nacos-naming`, `nacos-config` | Re-export `@nacos-group/client`. | P | rc | Impl 2 | Pending |
 | PKG-08 | No encryption plugin installed | The client loads and the pipeline works. | P | rc | Config 11 | Pending |
