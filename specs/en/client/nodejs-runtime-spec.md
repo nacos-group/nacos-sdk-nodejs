@@ -93,7 +93,12 @@ Reconnect is triggered by the cases in
 A response with error code `301` (`UN_REGISTER`) also triggers it, because the server
 no longer knows this connection.
 
-- Each attempt uses the next server in the list.
+`301` is handled inside the request retry loop in section 3.5, not by the caller. The
+connection moves to `UNHEALTHY`, the next server is selected asynchronously, and the
+request is retried after a short wait within the same budget.
+
+- Each reconnect attempt uses the next server in the list. A request retry inside a call
+  keeps the current connection unless `301` selects a new server.
 - The delay starts at 1 second, doubles, and is capped at 60 seconds. It resets after
   a successful connection.
 - `ConnectResetRequest` is acknowledged. If it names a server that is in the current
@@ -125,16 +130,42 @@ response from an earlier connection.
 
 | Connection state | Behavior |
 | --- | --- |
-| `RUNNING` | Sends the request. |
-| `STARTING`, `UNHEALTHY` | Waits for `RUNNING` until `requestTimeout`, then rejects with `NacosConnectionError`. |
-| `SHUTDOWN` | Rejects with `NacosConnectionError`. |
+| `RUNNING` | Sends the attempt. |
+| `STARTING`, `UNHEALTHY` | Waits for `RUNNING` until the remaining budget is exhausted, then counts as a connection failure. |
+| `SHUTDOWN` | Rejects with `NacosConnectionError` without an attempt. |
 
-A request that was sent is never retried by the runtime. If the connection drops first,
-it rejects as a result-unknown failure, as defined by the
+A request runs a bounded retry loop, following Java `RpcClient#request`:
+
+| Property | Value |
+| --- | --- |
+| Attempts | One initial attempt and up to three retries. |
+| Budget | `start + requestTimeout`, default 3000 ms. |
+| Deadline check | Before each attempt. Each attempt may use the full per-attempt timeout, so the total can exceed the budget. `requestTimeout <= 0` disables the deadline check. |
+| Retry trigger | Any failed attempt: connection unavailable, connection lost, no response, timeout, result unknown, or any `ErrorResponse`, including a server rejection. |
+| `301 UN_REGISTER` | Moves the connection to `UNHEALTHY`, selects the next server asynchronously, waits `min(100, requestTimeout / 3)`, and retries within the same budget. |
+
+When the attempts or the budget are exhausted, the call rejects. The class is decided over
+the whole call, so that the error model's guarantee stays true:
+
+| Outcome of the call | Error |
+| --- | --- |
+| No attempt was sent | `NacosConnectionError` |
+| At least one attempt was sent, and the final failure has no server response | `NacosTimeoutError` with `NACOS_CONNECTION_LOST` |
+| The final attempt received a server response | `NacosServerError`, or `NacosAuthError` for 401 and 403 |
+
+The middle row is deliberate. An earlier attempt may have been applied even when a later
+attempt could not be sent, so the call is result unknown, not connection unavailable. Java
+surfaces the last exception instead; Node.js keeps the stronger guarantee from the
 [error model](../sdk/sdk-nodejs-impl-spec.md#6-error-model).
 
-Java `RpcClient#request` retries after a failure, including for writes. Node.js does
-not, because a retry after an unknown result could apply a write twice.
+A replay after an unknown result may apply a write more than once. Each operation therefore
+documents its replay policy: Naming keeps its intent and uses redo (Naming Runtime Spec
+section 6), and the Config CAS stale-comparison boundary is in the
+[SDK Implementation Spec](../sdk/sdk-nodejs-impl-spec.md#51-nacosconfigclient).
+Retaining an intent or replaying a request never turns a failed call into a success.
+
+The runtime also provides an internal `requestOnce` path with no retries, for a caller that
+must not replay. It is not part of the public API.
 
 ## 4. Ability Negotiation
 
@@ -238,7 +269,6 @@ leaves it out, so that it cannot reach production.
 
 | Topic | Java | Node.js |
 | --- | --- | --- |
-| Request retry | Retries in `RpcClient#request` | Never retries a sent request |
 | Credentials rejected at startup | Logs, and continues in the background | `ready()` rejects and the client stops |
 | TLS trust-all | Available | Not available |
 | Custom address and auth providers | SPI | Not available |
