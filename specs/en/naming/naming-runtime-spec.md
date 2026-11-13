@@ -100,22 +100,25 @@ An ephemeral registration records its intent before sending the request. A succe
 response marks the intent registered. A failed call rejects the caller, and the intent stays
 as the latest desired state; it is not rolled back to the previous one.
 
-| Result of the request | Intent |
+| Result of the call | Intent |
 | --- | --- |
 | Success | Kept, and marked registered. |
-| Server rejected | Kept as the latest intent. The call rejects. Redo applies it later. |
+| Typed server rejection | Kept as the latest intent. The call rejects. Redo applies it later. |
+| Protocol `ErrorResponse` after all attempts fail | Kept as the latest intent. The call rejects. Redo applies it later. |
 | Connection unavailable or result unknown | Kept as the latest intent. The call rejects. Redo applies it later. |
 
-A server rejection, a connection failure, and an unknown result follow the same rule: the
-caller sees the failure, and retaining the intent never turns that failed call into a
-success. This matches `NamingGrpcClientProxy#registerInstance`, which calls
-`cacheInstanceForRedo` before sending and leaves the record unregistered when the request
-fails.
+A server rejection, a connection failure, and an unknown result all reject the caller, and
+retaining the intent never turns a failed call into a success. This matches
+`NamingGrpcClientProxy#registerInstance`, which calls `cacheInstanceForRedo` before sending
+and leaves the record unregistered when the request fails.
 
-The runtime retries the request within its own budget, as defined by
-[Runtime Requests](../client/nodejs-runtime-spec.md#35-requests). Those foreground attempts
-are separate from background redo. They share the same intent: after the call returns, redo
-still owns the outcome.
+The runtime retries transport-level failures within its own budget, as defined by
+[Runtime Requests](../client/nodejs-runtime-spec.md#35-requests). A protocol `ErrorResponse`
+is such a failure, so a later successful attempt completes the call normally. A normal typed
+response is not retried by the runtime: Naming reads its business result and rejects the call
+when it reports failure. In both cases, the call outcome is separate from background redo.
+Once the call has finally failed, redo may apply the intent later, but it does not change
+that call's outcome.
 
 An ephemeral registration that failed can become effective later through redo, for example
 after connectivity or permissions recover. To cancel it, the caller calls
@@ -126,19 +129,36 @@ which is why callers cancel the intent explicitly rather than relying on a rollb
 
 ### 2.4 Deregistration
 
-The request follows the route in section 2.1. A non-200 response rejects the call.
-Deregistering an instance that is not registered succeeds, following the
+The request follows the route in section 2.1. A normal typed response with a non-200
+business result rejects the call. A protocol `ErrorResponse` is retried by the runtime first;
+only a final failure rejects the call. Deregistering an instance that is not registered
+succeeds, following the
 [lifecycle spec](https://github.com/alibaba/nacos/blob/3.3.0/specs/en/naming/naming-instance-lifecycle-spec.md#4-deregistration).
 
-**Ephemeral instances.** The instance leaves the desired set when the call starts, and its
-record is marked unregistered before the request is sent. Removing one instance of a batch
-sends the complete remaining set, as in section 2.2, so the others are not lost.
+**Ephemeral instances.** The instance leaves the desired set when the call starts, and the
+removal intent is recorded. The confirmation from the current connection is preserved: an
+existing `registered=true` is not cleared before the request is sent. Only a successful
+deregistration commits the removal, and only a connection lifecycle change resets the
+confirmation. A failed deregistration does not restore the removed instance to the desired
+set. Removing one instance of a batch sends the complete remaining set, as in section 2.2,
+so the others are not lost.
 
-| Result of the request | Effect |
+| Result of the call | Effect |
 | --- | --- |
 | Success | Confirmed. The record is removed if the set is now empty. |
-| Server rejected | The call rejects. The unregistered intent stays. Redo converges and never re-registers the removed instance. |
-| Connection unavailable or result unknown | The call rejects. The unregistered intent stays. Redo converges. |
+| Typed server rejection | The call rejects. The removal intent stays and the confirmation is preserved, so redo retries the remote removal. |
+| Protocol `ErrorResponse` after all attempts fail | The call rejects. The removal intent stays and the confirmation is preserved, so redo retries the remote removal. |
+| Connection unavailable or result unknown | The call rejects. The removal intent stays. The connection change resets the confirmation, and redo converges. |
+
+The state transitions shared by this section and section 6:
+
+| Starting state or event | Required state and next action |
+| --- | --- |
+| Confirmed registration → deregistration starts | The desired set becomes empty; `registered=true` is retained; the removal is pending. |
+| Deregistration fails on the same live connection | Keep the removal intent and the confirmation. Redo selects remote removal, not a local `REMOVE` or a re-registration. |
+| Deregistration succeeds | Update the confirmation and clear the removal record when appropriate. |
+| The connection changes | Apply the connection and `epoch` reset rule. An old response must not restore obsolete state. |
+| One member is removed from a batch | Keep the remaining desired members and reconcile that set. Do not apply the empty-set cleanup rule to the whole service. |
 
 The application-initiated deregistration always attempts the real request, even when the
 record has never been confirmed registered (`registered` is false). `registered=false` alone
@@ -151,17 +171,21 @@ already dropped the publications of the old connection. Redo then sends only wha
 the desired set, or removes the record if nothing remains.
 
 Registering the same instance again while its removal is pending puts it back in the desired
-set. This is the `registered=false`, unregistering, desired registered case in section 6.1,
-which redo treats as `REGISTER`. The per-service queue keeps the two calls in order.
+set. Redo treats a non-empty desired set as `REGISTER`, including the `registered=false`,
+unregistering, desired registered row in section 6.1. The per-service queue keeps the two
+calls in order.
 
 A removal record that is cleared by redo (`RedoType.REMOVE`) only discards local state. It is
 not evidence that the server-side publication is gone.
 
 `master` removes its local record before the request, and resolves on a non-200 response.
 
-**Persistent instances.** There is no redo record, because the server owns the state. Any
-failure rejects the call and the caller decides what to do. Nothing is retried or replayed, and
-a persistent instance is never sent as an ephemeral registration.
+**Persistent instances.** Persistent instances do not participate in background Naming redo
+or reconnect replay, because the server owns the state. Their foreground gRPC requests use
+the normal bounded RPC retry policy in
+[Runtime Requests](../client/nodejs-runtime-spec.md#35-requests). If the complete call fails,
+the failure is surfaced to the caller. The HTTP fallback keeps its transport behavior, and a
+persistent instance is never sent as an ephemeral registration.
 
 ## 3. Discovery
 
@@ -289,11 +313,18 @@ Each grouped service has two independent redo records.
 current connection. `registered=false` can also mean that no response was ever confirmed.
 `dirty` means that the desired set differs from what the server last confirmed.
 
+Starting a deregistration does not set `registered=false`. On a live connection the
+confirmation stays true until the removal succeeds; only a connection change resets it. This
+is what keeps redo on `UNREGISTER` instead of `REMOVE` after a failed removal.
+
 | Event | Effect |
 | --- | --- |
-| `disconnected` signal | Marks every record `registered: false`, and emits `redoPending`. |
-| Desired set changes | Sets `dirty: true`. |
-| Success response | Sets `registered: true` and `dirty: false`, only if the `epoch` is the one captured before sending. |
+| `disconnected` signal | Marks every record `registered: false`, increments the `epoch`, and emits `redoPending`. |
+| Desired set or subscription intent changes | Sets `dirty: true`. |
+| Registration succeeds | Sets `registered: true` and `dirty: false`, only if the `epoch` is the one captured before sending. |
+| Deregistration succeeds | Clears the removal record when the desired set is empty, only if the `epoch` matches. |
+| Subscribe succeeds | Sets the subscription `registered: true`, only if the `epoch` matches. |
+| Unsubscribe succeeds | Clears the subscription record when it is no longer wanted, only if the `epoch` matches. |
 
 The `epoch` check stops a late response from an earlier connection from marking a record as
 restored. Java added this for the same race.
@@ -333,6 +364,10 @@ The `Empty / No` row is Java's `REMOVE`. It discards local state only. `register
 not prove that the server holds no publication: it can also mean that no registration
 response was ever confirmed. The application-initiated deregistration always sends the real
 request (section 2.4), so the direct path still attempts the cancellation.
+
+A removal that failed on a live connection keeps `registered=true` (section 2.4), so the row
+is `Empty / Yes` and redo sends the removal (`UNREGISTER`). `Empty / No` applies only after a
+connection change has reset the confirmation.
 
 | Subscription wanted | `registered` | Action |
 | --- | --- | --- |
@@ -390,12 +425,16 @@ The Test Design Spec turns these into scenarios.
 | Deregister an ephemeral instance | It is gone, and the record is removed. | 2.4 |
 | Deregister a persistent instance | Uses the persistent path, not `InstanceRequest`. | 2.1, 2.4 |
 | Deregister a persistent instance, ability absent | Goes over HTTP. | 2.1 |
-| Deregister rejected by the server | The call rejects, the unregistered intent stays, and redo never re-registers it. | 2.4, 6.2 |
-| Deregister fails on a live connection, from a confirmed registration | The call rejects, and redo retries until confirmed. | 2.4, 6.2 |
+| Deregister rejected by the server | The call rejects; the removal intent stays and the confirmation is preserved; redo retries the remote removal. | 2.4, 6.2 |
+| Deregister fails on a live connection, from a confirmed registration | The call rejects, the confirmation is preserved, and redo retries the remote removal until confirmed. | 2.4, 6.2 |
+| Protocol `ErrorResponse`, then a later attempt succeeds | The call succeeds. A failed attempt does not decide the call. | Runtime 3.5; 2.3 |
+| All attempts fail, then redo succeeds later | The call stays rejected; the retained intent may become effective later. | Runtime 3.5; 2.3, 6.2 |
+| Typed business response reports failure | Naming rejects the call and keeps the intent. The runtime does not retry a typed response. | 2.3 |
 | Result unknown, then deregistration fails | Direct deregistration is attempted, and the documented Java-compatible transition applies. | 2.4, 6.2 |
 | Disconnect during deregistration | The instance is not registered again after reconnect. | 2.4, 6.2 |
 | Remove one member after a batch, then reconnect | The others return, and the removed one does not. | 2.4, 6.2 |
-| Persistent deregistration fails | The call rejects, and nothing is replayed. | 2.4 |
+| Persistent deregistration fails | The call rejects, and there is no background redo or reconnect replay. | 2.4 |
+| Persistent foreground retry succeeds | The call succeeds, and no redo record is created. | 2.4; Runtime 3.5 |
 | Register again during a pending removal | The instance stays registered. | 2.4 |
 | Late response from an old connection | The record stays unregistered, and redo runs. | 6.1 |
 | Redo fails once | It succeeds on a later run. | 6.2 |

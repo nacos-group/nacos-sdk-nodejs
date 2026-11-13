@@ -141,8 +141,24 @@ A request runs a bounded retry loop, following Java `RpcClient#request`:
 | Attempts | One initial attempt and up to three retries. |
 | Budget | `start + requestTimeout`, default 3000 ms. |
 | Deadline check | Before each attempt. Each attempt may use the full per-attempt timeout, so the total can exceed the budget. `requestTimeout <= 0` disables the deadline check. |
-| Retry trigger | Any failed attempt: connection unavailable, connection lost, no response, timeout, result unknown, or any `ErrorResponse`, including a server rejection. |
+| Retry trigger | Any failed attempt: connection unavailable, connection lost, no response, timeout, result unknown, or a protocol `ErrorResponse`. A normal typed response is not a retry trigger. |
 | `301 UN_REGISTER` | Moves the connection to `UNHEALTHY`, selects the next server asynchronously, waits `min(100, requestTimeout / 3)`, and retries within the same budget. |
+
+An attempt failure does not decide the call. A later successful attempt may complete the
+call successfully. Once the call has finally failed, retaining intent or succeeding through
+background redo does not change that call's outcome.
+
+| Sequence in one call | Result |
+| --- | --- |
+| A protocol `ErrorResponse`, then a later attempt succeeds inside the budget | The call succeeds. |
+| All foreground attempts fail, then background Naming redo succeeds | The call stays rejected. The retained intent may become effective later. |
+| An early `ErrorResponse`, then later attempts time out, budget exhausted | The final failure follows the final-error rule. The first response is not returned, and no success or empty result is manufactured. |
+| All attempts end with a server error | The final server error and its fields are preserved. |
+| A normal typed response reports a business failure | It is returned to the domain layer, which interprets it. It is not a protocol `ErrorResponse` and is not retried by the runtime. |
+
+A normal typed response is a successful attempt at the transport layer, even when its
+business result reports failure. The runtime returns it unchanged. A protocol
+`ErrorResponse` is a failed attempt and is retried.
 
 When the attempts or the budget are exhausted, the call rejects. The class is decided over
 the whole call, so that the error model's guarantee stays true:
@@ -153,10 +169,17 @@ the whole call, so that the error model's guarantee stays true:
 | At least one attempt was sent, and the final failure has no server response | `NacosTimeoutError` with `NACOS_CONNECTION_LOST` |
 | The final attempt received a server response | `NacosServerError`, or `NacosAuthError` for 401 and 403 |
 
-The middle row is deliberate. An earlier attempt may have been applied even when a later
-attempt could not be sent, so the call is result unknown, not connection unavailable. Java
-surfaces the last exception instead; Node.js keeps the stronger guarantee from the
-[error model](../sdk/sdk-nodejs-impl-spec.md#6-error-model).
+A typed business failure is rejected by the domain layer, not by the runtime, but the class
+surfaced to the caller is the same. The runtime only classifies transport-level outcomes.
+
+The middle row is a documented difference from Java, which surfaces the last exception. In
+Node.js, an earlier attempt may have been sent and applied even when a later attempt could
+not be sent. Reporting connection-unavailable would break the
+[error model](../sdk/sdk-nodejs-impl-spec.md#6-error-model)'s observable contract that this
+class means the request was not sent, and callers use that contract to decide whether a write
+may already have been applied. The classifier therefore looks at every attempt: any sent
+attempt whose outcome is unknown makes the call result unknown. Acceptance cases assert the
+attempt count, the final class, and the preserved server fields.
 
 A replay after an unknown result may apply a write more than once. Each operation therefore
 documents its replay policy: Naming keeps its intent and uses redo (Naming Runtime Spec
@@ -216,8 +239,10 @@ and `tokenTtl / 10`, so that clients do not all refresh at once.
 | Server unreachable | Keeps the current token and tries again on the next check. |
 | Credentials rejected | Goes to the `error` event. Later requests fail with `NacosAuthError`. |
 
-A 403 response marks the token for refresh, at most once per 60 seconds. The request
-that got the 403 still rejects, as in Java.
+A 403 response marks the token for refresh, at most once per 60 seconds. The attempt that
+got the 403 fails. If the call ultimately fails, it rejects with `NacosAuthError`; a later
+attempt after a successful refresh may complete the call. This is the attempt-versus-call
+distinction from section 3.5.
 
 ### 5.3 AK/SK
 
