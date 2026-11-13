@@ -90,13 +90,15 @@ the same common options.
 | `username`, `password` | common | - | Login credentials. |
 | `accessKey`, `secretKey`, `ramRoleName`, `signatureRegionId` | common | - | RAM-style credentials. |
 | `ssl` | common | `false` | Use TLS. |
+| `tls` | common | - | Private CA and client certificate. See the [Node.js Runtime Spec](../client/nodejs-runtime-spec.md#6-tls). |
+| `grpcPortOffset` | common | `1000` | gRPC port offset from the server port. |
 | `requestTimeout` | common | `3000` on gRPC, as in Java; `5000` on HTTP, as in 2.6.x | Request timeout in milliseconds. |
 | `transport` | common | `grpc` | `grpc` or `http`. |
 | `logger` | common | Console-based logger | Logger with `info`, `warn`, and `error`. |
 | `cacheDir` | config | `~/.node-diamond-client-cache` | Snapshot and failover directory. |
 
-At least one of `serverAddr` and `endpoint` is required. Priority between them
-follows Java and is defined by the Node.js Runtime Spec. Options that only the
+At least one of `serverAddr` and `endpoint` is required. If both are set, `endpoint`
+wins, as in Java. Options that only the
 HTTP transport uses, such as `unit` and `clusterName`, stay as they are.
 
 When `namespace` is not set, requests use `public`, but local cache paths keep the
@@ -207,8 +209,8 @@ Rules:
 - A throwing listener does not stop other listeners.
 - Logs and errors never contain passwords, tokens, or secret keys.
 
-`localRead` and the redo events carry only the resource identity and the reason.
-Their full payloads are defined with the runtime specs.
+`localRead` carries the resource identity and the source. The redo events are defined
+by the [Naming Runtime Spec](../naming/naming-runtime-spec.md#63-events).
 
 ## 7. Differences From Java
 
