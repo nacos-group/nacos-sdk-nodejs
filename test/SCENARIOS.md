@@ -61,7 +61,7 @@ and the status values.
 | ERR-02 | `remove`, non-200 response | Rejects with `NacosServerError`. | U | beta | Impl 5.1 | Pending |
 | ERR-03 | `publishConfigCas` | Correct MD5 resolves `true` and the server content changes. Stale MD5 resolves `false` and the server content is unchanged. Any other failure rejects. | U, I | beta | Impl 5.1 | Partial |
 | ERR-04 | Legacy config APIs on gRPC | Each rejects with `NacosUnsupportedError`. | U | beta | Impl 5.3 | Pending |
-| ERR-05 | Failed response | Never becomes success, empty data, or a timeout. | U | beta | Impl 6 | Pending |
+| ERR-05 | Failed attempt versus failed call | A failed attempt may be followed by a successful attempt. A finally failed call never becomes success, empty data, or a different error class. A typed business failure is not a protocol `ErrorResponse`. | U | beta | Impl 6 | Pending |
 | ERR-06 | Background failure, no `error` listener | The process does not crash. | U | beta | Impl 6 | Pending |
 | ERR-07 | Any error | Has a stable `code`, and keeps the cause. | U | beta | Impl 6 | Pending |
 | ERR-08 | Server error fields | `resultCode` and `errorCode` are preserved. | U | beta | Impl 6 | Partial |
@@ -88,9 +88,9 @@ and the status values.
 | CON-16 | Reconnect resets abilities | No value carries over. | U | beta | Runtime 4 | Pending |
 | CON-17 | Server restart | The original clients recover. | R | rc | Runtime 3.2 | Pending |
 | CON-18 | TLS with a private CA and with a client certificate | A real `@grpc/grpc-js` TLS fixture accepts a trusted CA and a valid client certificate; an untrusted CA, a hostname mismatch, and a missing or wrong client certificate map to `NacosConnectionError` and clean up the connection. | U, I | rc | Runtime 6 | Pending |
-| CON-19 | Config write replay policy | A publish/cas that fails with a connection failure or unknown result is retried within the budget. A CAS retry after an applied write may return `false`; this false negative is asserted as the documented Java-compatible boundary. | U | beta | Runtime 3.5, Impl 5.1 | Pending |
-| CON-20 | Server `ErrorResponse` | The request is retried within the budget, then the call rejects with the server error. Attempt count and final error are asserted. | U | beta | Runtime 3.5 | Pending |
-| CON-21 | Read retry | A Config query and a Naming query retry on a connection-class failure within the budget and succeed when a later attempt succeeds. | U | beta | Runtime 3.5 | Pending |
+| CON-19 | Config write replay policy | A publish/cas whose attempt fails with a connection failure, unknown result, or protocol `ErrorResponse` is retried within the budget; a later successful attempt completes the call. If all attempts fail the call rejects. A CAS retry after an applied write may return `false`; this false negative is asserted on the call's final outcome. | U | beta | Runtime 3.5, Impl 5.1 | Pending |
+| CON-20 | Protocol `ErrorResponse` and typed business failures | A protocol `ErrorResponse` is retried within the budget; a later success completes the call. If all attempts fail, the call rejects with the final server error and preserves its fields. A typed business response is returned to the domain layer and is not retried by the runtime. Attempt count and outcome are asserted. | U | beta | Runtime 3.5 | Pending |
+| CON-21 | Read retry with mixed attempts | A Config query and a Naming query retry on a connection-class failure or a protocol `ErrorResponse` within the budget. A later success completes the call; an exhausted sequence rejects with the documented final error. Assert attempt count and final outcome. | U | beta | Runtime 3.5 | Pending |
 | CON-22 | `getServerStatus()` | Reports UP and DOWN during normal operation, an outage, and recovery, and follows the public contract after `close()`. Querying status does not create a connection. | U, R | rc | Impl 5.2 | Pending |
 
 ## Authentication
@@ -109,7 +109,7 @@ and the status values.
 | AUTH-10 | Short token TTL | Reads, writes, registration, and subscription keep working. | R | beta | Runtime 5.2 | Pending |
 | AUTH-11 | Refresh, server unreachable | Keeps the token and retries. | U | beta | Runtime 5.2 | Pending |
 | AUTH-12 | Refresh, credentials rejected | `error` is emitted, and later requests reject. | U | beta | Runtime 5.2 | Pending |
-| AUTH-13 | 403 response | Marks refresh, at most once per 60 seconds. The request rejects. | U | beta | Runtime 5.2 | Pending |
+| AUTH-13 | 403 response | The attempt that got the 403 fails and refresh is marked, at most once per 60 seconds. If the call ultimately fails it rejects with `NacosAuthError`; a later attempt after a successful refresh may complete the call. | U | beta | Runtime 5.2 | Pending |
 | AUTH-14 | AK/SK over gRPC | Options match `aliyun_auth`, on Config and Naming. | U | beta | Runtime 5.3 | Pending |
 | AUTH-15 | AK/SK on a real MSE instance | Works end to end. | I | ga | Runtime 5.3 | Documented gap |
 | AUTH-16 | Secrets in logs and errors | Passwords, tokens, and keys do not appear. | U | beta | Impl 6 | Pending |
@@ -241,11 +241,11 @@ These are plugin tests. The pipeline itself is tested with stub filters in CFG-5
 | NAM-22 | Deregister an ephemeral instance | It is gone, and the record is removed. | I | rc | Naming 2.4 | Pending |
 | NAM-23 | Deregister a persistent instance | Uses the persistent path, not `InstanceRequest`. | I | rc | Naming 2.4 | Pending |
 | NAM-24 | Deregister a persistent instance, ability absent | Goes over HTTP. | U | rc | Naming 2.1 | Pending |
-| NAM-25 | Deregister rejected by the server | The call rejects, the unregistered intent stays, and redo never re-registers the removed instance. | U | rc | Naming 2.4, 6.2 | Pending |
-| NAM-26 | Deregister fails on a live connection, from a confirmed registration | The call rejects, redo retries until confirmed, and the eventual remote state is checked. | U | rc | Naming 2.4 | Pending |
+| NAM-25 | Deregister rejected by the server | The call rejects; the removal intent stays and the confirmed registration is preserved; redo retries the remote removal, never a local `REMOVE` or a re-registration. Verify the record state and the next redo request. | U | rc | Naming 2.4, 6.2 | Pending |
+| NAM-26 | Deregister fails on a live connection, from a confirmed registration | The call rejects, the confirmation is preserved, redo selects the remote removal, retries until confirmed, and the eventual remote state is checked. | U | rc | Naming 2.4 | Pending |
 | NAM-27 | Disconnect during deregistration | The instance is not registered again after reconnect. | U, R | rc | Naming 2.4 | Pending |
 | NAM-28 | Remove one member after a batch, then reconnect | The others return, and the removed one does not. | U, R | rc | Naming 2.4 | Pending |
-| NAM-29 | Persistent deregistration fails | The call rejects, and nothing is replayed. Bounded request retry does not introduce redo or reconnect replay. | U | rc | Naming 2.4 | Pending |
+| NAM-29 | Persistent deregistration retry | A retryable first attempt followed by success resolves the call and creates no redo record. If all attempts fail, the call rejects and no background redo record exists; reconnect does not re-register or deregister the instance. | U | rc | Naming 2.4, Runtime 3.5 | Pending |
 | NAM-33 | Register again during a pending removal | The instance stays registered. | U | rc | Naming 2.4 | Pending |
 | NAM-30 | Invalid view, `hosts` missing | Ignored, with a success ACK. | U | rc | Naming 4.1 | Pending |
 | NAM-31 | Cluster filter | Filters locally for reads and listeners. | U | rc | Naming 4 | Pending |
@@ -269,7 +269,7 @@ These are plugin tests. The pipeline itself is tested with stub filters in CFG-5
 | NAM-59 | Invalid local arguments | Rejected before any intent is recorded or request is sent. No redo record is created. | U | rc | Naming 2 | Pending |
 | NAM-60 | Register fails, then connectivity or permissions recover | The call rejects, the intent stays, and redo registers the instance later. | U, R | rc | Naming 2.3, 6.2 | Pending |
 | NAM-61 | Batch and ordering | Single → multiple → one → empty; a failed batch; deregister then register; late response from an old epoch. Both completion orders end at the latest intent and the correct members. | U | rc | Naming 2.3, 2.4, 2.2 | Pending |
-| NAM-62 | `getAllInstances → subscribe(L) → unSubscribe(L) → getAllInstances` | Discovery subscribes, the listener reuses the subscription, the last removal unsubscribes but keeps the cache, and the final discovery re-establishes the subscription; a later service change reaches the listener again. | U, I | rc | Naming 3, 5 | Pending |
+| NAM-62 | `getAllInstances → subscribe(L) → unSubscribe(L) → getAllInstances` | Initial discovery subscribes; L shares the subscription; removing the last listener unsubscribes and retains the cache; the final discovery restores the server subscription. Remote subscribe/unsubscribe operations and cache state are asserted separately. A later service change updates the cache and is visible to later discovery calls, while L is not called again. An explicit `subscribe(L)` afterwards is a new registration, and a different listener `L2` receives its specified notifications while L remains removed. | U, I | rc | Naming 3, 5 | Pending |
 | NAM-63 | Resubscription fails | With a cached view the allowed view is returned; with no cache the call rejects. Both keep the recovery intent and see new data after recovery. | U, R | rc | Naming 3, 5 | Pending |
 | NAM-64 | Multiple cluster-filtered listeners | One server subscription; removing one listener keeps the others subscribed and notified. | U | rc | Naming 5 | Pending |
 | NAM-65 | `subscribe: false` | Queries the server without creating a lasting subscription and without disturbing an existing listener subscription. | U | rc | Naming 3 | Pending |
@@ -277,7 +277,7 @@ These are plugin tests. The pipeline itself is tested with stub filters in CFG-5
 | NAM-67 | Listener returns a pending Promise | The ACK is sent and the accepted cache is readable while the Promise is unsettled. Later settle or reject does not change or repeat that ACK. | U | rc | Naming 5 | Pending |
 | NAM-68 | Listener throws or rejects | The ACK is sent, the failure goes to `error`, the accepted cache is not rolled back, and Config-style retry is not introduced. | U | rc | Naming 5 | Pending |
 | NAM-69 | Duplicate push, malformed view, stale epoch, push after unsubscribe | Each case follows section 4.1; a decoded view gets a success ACK, and no removed listener starts a new callback. | U | rc | Naming 4.1, 5 | Pending |
-| NAM-70 | Unsubscribe fails, resubscribe before the old unsubscribe completes, a late cleanup or redo response, `close()`, or unsubscribe during dispatch | Both completion orders; the latest intent wins, old work does not advance the new subscription, no removed listener starts a callback, and no write is required on an already closed stream. | U | rc | Naming 5 | Pending |
+| NAM-70 | Unsubscribe fails, resubscribe before the old unsubscribe completes, a late cleanup or redo response, `close()`, or unsubscribe during dispatch | Both completion orders; the latest intent wins, old work does not advance the new subscription, no removed listener starts a callback, an already executing callback is not forcibly interrupted, and no write is required on an already closed stream. A removed listener stays removed after connectivity recovery; retained cleanup intent must not recreate it. | U | rc | Naming 5 | Pending |
 | NAM-72 | Registration may have applied without a confirmed response, then deregistration fails | The direct deregistration is attempted, and the documented Java-compatible state transitions occur. No stronger surviving-connection cleanup guarantee is asserted. | U | rc | Naming 2.4, 6.2 | Pending |
 | NAM-71 | `selectOneHealthyInstance` boundaries | No eligible instance returns `null`; one eligible instance returns it; weighted selection uses controlled randomness at the weight boundaries. | U | beta | Impl 5.2 | Pending |
 
