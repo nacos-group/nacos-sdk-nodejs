@@ -21,7 +21,8 @@ This file provides guidance to AI coding agents (Claude Code, Cursor, GitHub Cop
 - **SDK scenario impact comes first**: Before adding, changing, deleting, or
   deprecating any public client method, option, model, listener behavior,
   lifecycle behavior, or error mapping, AI agents MUST analyze and update the
-  test scenarios and coverage registry in the same change set. If the
+  [test scenarios](./test/SCENARIOS.md) and
+  [coverage registry](./test/COVERAGE.md) in the same change set. If the
   end-to-end success path is impractical, cover parameter validation, boundary
   behavior, and controlled errors, and document the uncovered path.
 - **Disclose AI usage**: When a significant part of a commit is AI-generated, add a trailer to your commit message:

@@ -90,13 +90,15 @@ the same common options.
 | `username`, `password` | common | - | Login credentials. |
 | `accessKey`, `secretKey`, `ramRoleName`, `signatureRegionId` | common | - | RAM-style credentials. |
 | `ssl` | common | `false` | Use TLS. |
+| `tls` | common | - | Private CA and client certificate. See the [Node.js Runtime Spec](../client/nodejs-runtime-spec.md#6-tls). |
+| `grpcPortOffset` | common | `1000` | gRPC port offset from the server port. |
 | `requestTimeout` | common | `3000` on gRPC, as in Java; `5000` on HTTP, as in 2.6.x | Request timeout in milliseconds. |
 | `transport` | common | `grpc` | `grpc` or `http`. |
 | `logger` | common | Console-based logger | Logger with `info`, `warn`, and `error`. |
 | `cacheDir` | config | `~/.node-diamond-client-cache` | Snapshot and failover directory. |
 
-At least one of `serverAddr` and `endpoint` is required. Priority between them
-follows Java and is defined by the Node.js Runtime Spec. Options that only the
+At least one of `serverAddr` and `endpoint` is required. If both are set, `endpoint`
+wins, as in Java. Options that only the
 HTTP transport uses, such as `unit` and `clusterName`, stay as they are.
 
 When `namespace` is not set, requests use `public`, but local cache paths keep the
@@ -133,6 +135,15 @@ migration only has to handle behavior changes.
 | `addConfigFilter(filter)` | `addConfigFilter` | Added in 3.0. See the [Config Pipeline Spec](../config/config-pipeline-spec.md#8-transform). |
 | `close()` | `shutDown` | See section 3. |
 
+`publishSingle`, `publishConfigCas`, and `remove` use the runtime replay policy in the
+[Runtime Spec](../client/nodejs-runtime-spec.md#35-requests). `publishSingle` and `remove`
+are content-idempotent. `publishConfigCas` is not: if an attempt applied the write but its
+response was lost, a retry compares the now-stale `casMd5` and resolves `false`. That is the
+same observable result as a genuine conflict, and it matches Java. A later attempt can
+complete the call; the false-negative statement describes the call's final outcome. A caller
+that must distinguish it reads the config back. A server rejection that is not an md5
+conflict still rejects.
+
 ### 5.2 `NacosNamingClient`
 
 | Method | Java | Result |
@@ -148,6 +159,9 @@ migration only has to handle behavior changes.
 | `unSubscribe(info, listener?)` | `unsubscribe` | Removes the listener, or all listeners when none is given. |
 | `getServerStatus()` | `getServerStatus` | `UP` or `DOWN`. |
 | `close()` | `shutDown` | See section 3. |
+
+`getServerStatus()` checks the current connection and does not create one. After `close()`
+it rejects with `NacosConnectionError`, like any other call after close.
 
 ### 5.3 Legacy Config APIs
 
@@ -199,16 +213,21 @@ Rules:
 - A request in flight when the connection drops is a result-unknown failure, not a
   connection failure, because the server may have applied it. It rejects with
   `NacosTimeoutError` and the code `NACOS_CONNECTION_LOST`.
-- A failed response never turns into a success, an empty result, or a timeout.
-  Reject with what the server said.
+- A failed **attempt** does not by itself decide the call. The runtime may retry it, and a
+  later successful attempt completes the call successfully.
+- A finally failed **call** never turns into a success, an empty result, or a different error
+  class. Reject with what the final attempt said. A later background redo does not change
+  the outcome of a call that already returned.
+- A normal typed response that reports a business failure is handled by the domain layer.
+  It is not a protocol `ErrorResponse`, and the runtime does not retry it.
 - Failures that have no caller, such as a background refresh or a listener that
   throws, go to the `error` event. They must not crash the process, even when
   no `error` listener is registered.
 - A throwing listener does not stop other listeners.
 - Logs and errors never contain passwords, tokens, or secret keys.
 
-`localRead` and the redo events carry only the resource identity and the reason.
-Their full payloads are defined with the runtime specs.
+`localRead` carries the resource identity and the source. The redo events are defined
+by the [Naming Runtime Spec](../naming/naming-runtime-spec.md#63-events).
 
 ## 7. Differences From Java
 
