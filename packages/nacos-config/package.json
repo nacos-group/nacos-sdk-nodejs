@@ -23,6 +23,9 @@
     "urllib": "^2.29.1",
     "utility": "^1.14.0"
   },
+  "optionalDependencies": {
+    "@alicloud/kms20160120": "^3.3.0"
+  },
   "devDependencies": {
     "@types/mocha": "^5.2.5",
     "@types/node": "^10.9.4",

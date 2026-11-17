@@ -122,6 +122,49 @@ NacosConfigClient 的 options 定义见 [ClientOptions](https://github.com/nacos
 
 > gRPC 模式下由后台定时器（默认每 10s）探测容灾文件；HTTP 模式下随长轮询探测。
 
+对于 `cipher-` 加密配置：快照保存的是**密文**，并与配对的 `encryptedDataKey` 一起存成**单条记录**原子落盘（内容与密钥要么一起更新、要么都不更新，不会出现错配的半成品；随配置删除一起清理）；容灾文件按约定是用户维护的**明文**，永远不会被送往 KMS 解密，可作为加密配置的应急覆盖手段。详见下文「配置加密 (KMS)」。
+
+## 配置加密 (KMS)
+
+dataId 以 `cipher-` 为前缀的配置会被透明加解密，线格式与 Java / Go / Python SDK 一致。主路径是信封加密：向 KMS 申请数据密钥，本地 AES/ECB/PKCS5Padding 加密内容，`encryptedDataKey` 随密文经 HTTP 或 gRPC 传输；直接形态则把整个配置值交给 CMK 做 Encrypt/Decrypt。两种形态上线的字节与其它 SDK 相同，因此同一 dataId 可以由一种语言写、另一种语言读。
+
+支持三种 dataId 形态：
+
+| dataId 形态 | 加密方式 |
+|---|---|
+| `cipher-kms-aes-128-<dataId>` | 信封加密，数据密钥 `AES_128` |
+| `cipher-kms-aes-256-<dataId>` | 信封加密，数据密钥 `AES_256` |
+| `cipher-<dataId>`（无算法段） | CMK 直接 Encrypt/Decrypt 整个配置值 |
+
+> 仅支持上述 KMS 算法。第二段为其它算法名的 dataId（如 Java 加密插件的 `cipher-aes-...`）没有 Node.js 实现，会被当作直接 KMS 形态处理——请勿跨 SDK 共用此类 dataId。
+
+内置客户端通过 `@alicloud/kms20160120`（**可选依赖**，懒加载，未安装/未使用 `cipher-` 配置时零开销）访问 KMS 公共网关；凭据复用 [Aliyun RAM 鉴权](../../README.md#aliyun-ram-authentication) 的全部方式。
+
+专有实例（`<实例ID>.cryptoservice.kms.aliyuncs.com`）分两种情况：用 **AK/STS** 时内置客户端就够，把 `kmsEndpoint` 指向实例地址、再给出该实例的私有 CA（`kmsCaFileContent` / `kmsCaFilePath`）即可，不需要写适配器；实例密钥默认仅限 VPC 访问，从公网调用需先在控制台（实例管理 → 实例详情页）开启公网访问。用 **ClientKey / 应用接入点（AAP）** 时才需要通过 `kmsClient` / `kmsClientFactory` 注入适配器——ClientKey 走的是 DKMS 实例协议（protobuf 报文 + RSA 请求签名），内置客户端不实现，本 SDK 也不硬依赖任何 DKMS SDK。只设置 `kmsClientKeyContent` / `kmsClientKeyFilePath` 而不给 factory 会直接报错，不会静默退回 AK 鉴权。
+
+```js
+const client = new NacosConfigClient({
+  serverAddr: '127.0.0.1:8848',
+  kmsRegionId: 'cn-hangzhou',
+  // kmsKeyId: 'alias/acs/mse', // 默认 CMK，对齐 Java MSE 客户端
+});
+
+await client.publishSingle('cipher-kms-aes-256-app-secret', 'DEFAULT_GROUP', 'password=secret');
+const plain = await client.getConfig('cipher-kms-aes-256-app-secret', 'DEFAULT_GROUP'); // 'password=secret'
+```
+
+主要选项：`kmsRegionId` / `kmsEndpoint` / `kmsKeyId`（默认 `alias/acs/mse`）、专有实例私有 CA `kmsCaFileContent` / `kmsCaFilePath`、`kmsClient`、`kmsClientFactory`（配合 ClientKey 透传选项 `kmsClientKeyContent` / `kmsClientKeyFilePath` / `kmsPassword`）、数据密钥缓存 `kmsCacheEnabled` / `kmsCacheMaxSize` / `kmsCacheAfterAccessSeconds` / `kmsCacheAfterWriteSeconds`。完整说明见根 [README](../../README.md#encrypted-configuration-aliyun-kms) 与示例 [example/kms-config.js](../../example/kms-config.js)。
+
+行为要点（对齐 Java MSE 客户端）：
+
+- 缓存 / 快照 / md5 / 长轮询比对全部基于**密文**，仅在用户边界（getConfig、监听回调、变更推送）解密；
+- 因此 `cipher-` dataId 无法用 `publishConfigCas` 做「读-改-写」：服务端拿 `casMd5` 与**密文**比对，而对外 API（getConfig、监听回调）只给明文，拿不到能匹配上的 md5。这是客户端加密本身的限制而非本 SDK 独有，Java 客户端同样如此——需要 CAS 就用明文 dataId，否则不走 CAS 直接发布；
+- AES 载荷固定按 **UTF-8** 编码，与 `defaultEncoding` 无关：后者描述的是 HTTP 响应体的解码方式，而密文格式是与 Java / Go / Python 客户端共享的，它们同样按 UTF-8 加密；
+- 发布 `cipher-` 配置会自动为 CMK 开启尽力而为的**删除保护**（按 keyId 去重，不阻塞、不失败发布）；
+- KMS 调用带单请求超时与整体重试预算（默认 3 次 / 约 3s），网关挂起或限流不会拖死配置操作；
+- 读取时解密失败通过客户端 `error` 事件上报，不会把不可信内容交给监听器；监听器场景下该次通知会保留为待投递工作并按有界退避重试，KMS 恢复后自动补发，无需等服务端再次变更配置；
+- `close()` 会级联释放注入的 KMS 客户端（幂等）。
+
 ## Contacts
 
 * [@Harry Chen](https://github.com/czy88840616)

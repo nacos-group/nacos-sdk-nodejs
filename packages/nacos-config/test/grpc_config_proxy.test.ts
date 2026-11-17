@@ -48,7 +48,7 @@ describe('test/grpc_config_proxy.test.ts', () => {
 
     await sleep(500);
 
-    const content = await proxy.getConfig(dataId, group);
+    const { content } = await proxy.getConfig(dataId, group);
     assert(content === 'grpc_test=hello', `getConfig should return published content, got: ${content}`);
   });
 
@@ -60,7 +60,7 @@ describe('test/grpc_config_proxy.test.ts', () => {
 
     await sleep(500);
 
-    const content = await proxy.getConfig(dataId, group);
+    const { content } = await proxy.getConfig(dataId, group);
     assert(content === 'grpc_test=updated', `getConfig should return updated content, got: ${content}`);
   });
 
@@ -72,7 +72,7 @@ describe('test/grpc_config_proxy.test.ts', () => {
 
     await sleep(500);
 
-    const content = await proxy.getConfig(dataId, group);
+    const { content } = await proxy.getConfig(dataId, group);
     // 配置删除后服务端返回 CONFIG_NOT_FOUND(errorCode=300)，getConfig 契约为 string|null，
     // not-found 归一为 null；兼容个别服务端 200+空串，二者都表示“无内容”。
     assert(content === '' || content === null, `getConfig after remove should return empty or null (config-not-found), got: ${content}`);
@@ -87,7 +87,7 @@ describe('test/grpc_config_proxy.test.ts', () => {
     await sleep(500);
 
     // Get initial MD5
-    const initial = await proxy.getConfig(listenDataId, group);
+    const { content: initial } = await proxy.getConfig(listenDataId, group);
     assert(initial === 'initial=value');
 
     // Listen for changes

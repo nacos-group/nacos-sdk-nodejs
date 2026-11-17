@@ -209,4 +209,91 @@ describe('test/utils.test.ts', function() {
     assert(credentials.securityToken === 'providerToken');
     assert(credentials.signatureRegionId === 'cn-hangzhou');
   });
+
+  it('should resolve aliyun config credentials from secret manager client', async function() {
+    let requestedName;
+    const configuration = createDefaultConfiguration({
+      alibabaCloudSecretName: 'nacos/credentials',
+      secretManagerClient: {
+        getSecretValue: async name => {
+          requestedName = name;
+          return {
+            secretValue: JSON.stringify({
+              AccessKeyId: 'smAccessKey',
+              AccessKeySecret: 'smSecretKey',
+              SecurityToken: 'smToken',
+            }),
+          };
+        },
+      },
+    });
+
+    const credentials = await resolveAliyunCredentialsAsync(configuration);
+    assert(requestedName === 'nacos/credentials');
+    assert(credentials.accessKeyId === 'smAccessKey');
+    assert(credentials.accessKeySecret === 'smSecretKey');
+    assert(credentials.securityToken === 'smToken');
+  });
+
+  it('should cache secret manager credentials across resolves', async function() {
+    let count = 0;
+    const configuration = createDefaultConfiguration({
+      alibabaCloudSecretName: 'nacos/credentials',
+      secretManagerClient: {
+        getSecretValue: async () => {
+          count++;
+          return { secretValue: JSON.stringify({ AccessKeyId: 'ak' + count, AccessKeySecret: 'sk' }) };
+        },
+      },
+    });
+
+    const first = await resolveAliyunCredentialsAsync(configuration);
+    const second = await resolveAliyunCredentialsAsync(configuration);
+    assert(count === 1);
+    assert(first.accessKeyId === 'ak1');
+    assert(second.accessKeyId === 'ak1');
+  });
+
+  it('should schedule rotation when secret manager value has no expiration', async function() {
+    const configuration = createDefaultConfiguration({
+      alibabaCloudSecretName: 'nacos/credentials',
+      secretManagerClient: {
+        getSecretValue: async () => ({ secretValue: JSON.stringify({ AccessKeyId: 'ak', AccessKeySecret: 'sk' }) }),
+      },
+    });
+
+    const credentials = await resolveAliyunCredentialsAsync(configuration);
+    assert(credentials.expiration);
+    assert(Date.parse(String(credentials.expiration)) > Date.now());
+  });
+
+  it('should throw when secret name is configured without a secret manager client', async function() {
+    const configuration = createDefaultConfiguration({
+      alibabaCloudSecretName: 'nacos/credentials',
+    });
+
+    let capturedError;
+    try {
+      await resolveAliyunCredentialsAsync(configuration);
+    } catch (error) {
+      capturedError = error;
+    }
+    assert(capturedError && capturedError.code === 'NACOS_SECRET_MANAGER_CLIENT_MISSING');
+  });
+
+  it('should support a secret manager client provided as a function', async function() {
+    let requestedName;
+    const configuration = createDefaultConfiguration({
+      alibabaCloudSecretName: 'nacos/credentials',
+      secretManagerClient: async name => {
+        requestedName = name;
+        return { SecretValue: JSON.stringify({ AccessKeyId: 'fnAk', AccessKeySecret: 'fnSk' }) };
+      },
+    });
+
+    const credentials = await resolveAliyunCredentialsAsync(configuration);
+    assert(requestedName === 'nacos/credentials');
+    assert(credentials.accessKeyId === 'fnAk');
+    assert(credentials.accessKeySecret === 'fnSk');
+  });
 });

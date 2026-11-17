@@ -20,11 +20,20 @@ import { getMD5String } from './utils';
 import * as path from 'path';
 import * as is from 'is-type-of';
 import { HttpAgent } from './http_agent';
-import { readConfigWithFailover, withSnapshotLock } from './disaster_recovery';
+import { ConfigCipher, createConfigCipher, ENCRYPTED_DATA_KEY_HEADER, ENCRYPTED_DATA_KEY_PARAM, isCipherDataKeyMissingError } from './cipher';
+import { readConfigWithFailover, withSnapshotLock, ConfigContentSource } from './disaster_recovery';
 
 const Base = require('sdk-base');
 const gather = require('co-gather');
 const { sleep } = require('mz-modules');
+
+/** 服务端返回的原始配置（cipher dataId 为密文）以及随行的 encryptedDataKey。 */
+interface ConfigFetchResult {
+  content: string | null;
+  encryptedDataKey?: string;
+  /** 容灾读取来源；'failover' 表示命中用户手工维护的明文容灾文件，用户边界据此跳过解密。 */
+  source?: ConfigContentSource;
+}
 
 export class ClientWorker extends Base implements IClientWorker {
 
@@ -32,6 +41,16 @@ export class ClientWorker extends Base implements IClientWorker {
   private isClose = false;
   private isLongPulling = false;
   private subscriptions = new Map();
+  private cipher: ConfigCipher;
+  /** 同一 key 的通知串行链：保证解密慢的旧版本不会晚于新版本回调（保持拉取顺序）。 */
+  private deliveryChains = new Map<string, Promise<void>>();
+  /** 解密失败的通知仍有待投递工作（跨“定时器已触发、重试已排队”整个窗口），新订阅者不得单独补发。 */
+  private pendingDeliveries = new Set<string>();
+  /** 解密失败后的待投递重试定时器；有界退避，成功投递或退订/关闭时清除。 */
+  private deliveryRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** 重试退避窗口（测试可覆写以缩短等待）。 */
+  protected deliveryRetryBaseMs = 1000;
+  protected deliveryRetryMaxMs = 30000;
   protected loggerDomain = 'Nacos';
   private debugPrefix = this.loggerDomain.toLowerCase();
   private debug = require('debug')(`${this.debugPrefix}:${process.pid}:ins-${this.uuid}:client_worker`);
@@ -51,6 +70,7 @@ export class ClientWorker extends Base implements IClientWorker {
     super(options);
     // 同一个key可能会被多次订阅，避免不必要的 `warning`
     this.setMaxListeners(100);
+    this.cipher = createConfigCipher(this.configuration);
     this.ready(true);
     this.debug('client worker start');
   }
@@ -88,6 +108,16 @@ export class ClientWorker extends Base implements IClientWorker {
     this.isClose = true;
     this.removeAllListeners();
     this.subscriptions.clear();
+    for (const timer of this.deliveryRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.deliveryRetryTimers.clear();
+    this.deliveryChains.clear();
+    this.pendingDeliveries.clear();
+    if (this.cipher) {
+      // Cascade so an injected KMS client is released (HTTP mode owns the cipher here).
+      this.cipher.close();
+    }
     this.debug('client worker closed');
   }
 
@@ -123,7 +153,12 @@ export class ClientWorker extends Base implements IClientWorker {
         }
       })();
     } else if (!is.nullOrUndefined(item.md5)) {
-      process.nextTick(() => listener(item.content));
+      // 用户边界：缓存中为密文时先解密再回调监听器；经由同一 key 的投递链保持顺序。
+      // 已有失败投递在等待重试时不再单独补发：重试会广播给所有监听器（含刚加入的这个），
+      // 这里再发一次既重复，又会让老监听器的待投递工作失去代表。
+      if (!this.pendingDeliveries.has(key)) {
+        this.enqueueDelivery(key, item, [ listener ]);
+      }
     }
     return this;
   }
@@ -134,7 +169,8 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {void}
    */
   private async syncConfigs(list) {
-    const tasks = list.map(({ dataId, group }) => this.getConfig(dataId, group));
+    // 拉取原始内容（cipher dataId 为密文），md5 与缓存均基于密文，保证长轮询探针与服务端一致
+    const tasks = list.map(({ dataId, group }) => this.getConfigInner(dataId, group));
     const results = await gather(tasks, 5);
     for (let i = 0, len = results.length; i < len; i++) {
       const key = this.formatKey(list[ i ]);
@@ -153,17 +189,160 @@ export class ClientWorker extends Base implements IClientWorker {
         continue;
       }
 
-      const content = result.value;
+      const { content, encryptedDataKey, source } = result.value;
+      const isFailover = source === 'failover';
+      // 拉取开始后才写入的容灾文件：读取时已判定无容灾内容，这份服务端结果已过期。
+      // 容灾期间本地配置优先（对齐 Java isUseLocalConfigInfo），不得覆盖应急值；
+      // 否则 useFailover 与 failoverVersion 已就位，下一轮检查会跳过，应用将永久停在服务端值。
+      if (item.useFailover && !isFailover) {
+        this.debug('discard stale server result for %s: failover became active during fetch', key);
+        continue;
+      }
       const md5 = getMD5String(content, this.defaultEncoding);
       // 防止应用启动时，并发请求，导致同一个 key 重复触发
       if (item.md5 !== md5) {
         item.md5 = md5;
         item.content = content;
+        item.encryptedDataKey = encryptedDataKey;
+        item.isFailover = isFailover;
         // 异步化，避免处理逻辑异常影响到 nacos 内部
         // 这里将获取的数据直接事件的方式返回给 subscribe 一开始监听的地方
         this.debug('get new data and callback to listener', item);
-        setImmediate(() => this.emit(key, content));
+        this.enqueueDelivery(key, item);
       }
+    }
+  }
+
+  /**
+   * 把通知排进该 key 的串行投递链。
+   * 解密是异步的：若每次拉取都各自 fire-and-forget，先到的旧版本可能在 KMS 慢响应后
+   * 晚于新版本回调，应用最终停在过期值，而 item.md5 已指向新版本，下一轮长轮询也不会纠正。
+   * 入链时对内容做快照，避免排队期间 item 被后续拉取改写。
+   * @param listeners 仅投递给指定监听器（订阅时补发缓存值）；省略则广播给该 key 的全部监听器
+   */
+  private enqueueDelivery(key: string, item: any, listeners?: Function[]): Promise<void> {
+    if (!listeners) {
+      // 新的广播取代旧的待重试投递；监听器补发不得清掉重试（见 subscribe）
+      this.clearDeliveryRetry(key);
+    }
+    const snapshot = {
+      md5: item.md5,
+      content: item.content,
+      encryptedDataKey: item.encryptedDataKey,
+      isFailover: item.isFailover,
+    };
+    const prev = this.deliveryChains.get(key) || Promise.resolve();
+    const run = prev.then(() => (listeners
+      ? this.deliverToListeners(key, item, snapshot, listeners)
+      : this.deliverToSubscribers(key, item, snapshot)));
+    // 链本身不因单次投递失败中断
+    const settled = run.catch(() => {});
+    this.deliveryChains.set(key, settled);
+    settled.then(() => {
+      if (this.deliveryChains.get(key) === settled) {
+        this.deliveryChains.delete(key);
+      }
+    });
+    return run;
+  }
+
+  /** 仅向指定监听器补发当前明文（新订阅者拿缓存值），失败上报但不重试。 */
+  private async deliverToListeners(key: string, item: any, snapshot: any, listeners: Function[]): Promise<void> {
+    let plain: string;
+    try {
+      plain = await this.cipher.decryptIfNeeded(item.dataId, snapshot.content, snapshot.encryptedDataKey, snapshot.isFailover);
+    } catch (err) {
+      this._error(err);
+      return;
+    }
+    if (this.isClose || this.subscriptions.get(key) !== item) {
+      return;
+    }
+    this.notifyListeners(key, plain, listeners);
+  }
+
+  /** 向该 key 的全部监听器广播内容；解密失败时保留为待投递工作并重试。 */
+  private async deliverToSubscribers(key: string, item: any, snapshot: any): Promise<void> {
+    if (snapshot.md5 === null) {
+      return;
+    }
+    if (item.deliveredMd5 === snapshot.md5) {
+      // 该内容已成功下发过（例如容灾内容与当前值一致）：之前失败的待投递工作随之作废
+      this.pendingDeliveries.delete(key);
+      return;
+    }
+    let plain: string;
+    try {
+      plain = await this.cipher.decryptIfNeeded(item.dataId, snapshot.content, snapshot.encryptedDataKey, snapshot.isFailover);
+    } catch (err) {
+      this._error(err);
+      // 缺 encryptedDataKey 的响应无法靠重试同一份内容恢复（Java 同样直接报错），
+      // 只登记失败等下一次服务端推送 / sync 带来成对的密文与 key。
+      if (!isCipherDataKeyMissingError(err) && !this.isClose && this.subscriptions.get(key) === item) {
+        this.pendingDeliveries.add(key);
+        this.scheduleDeliveryRetry(key, item);
+      }
+      return;
+    }
+    if (this.isClose || this.subscriptions.get(key) !== item) {
+      return;
+    }
+    item.deliveredMd5 = snapshot.md5;
+    item.deliveryRetryAttempts = 0;
+    this.pendingDeliveries.delete(key);
+    this.notifyListeners(key, plain);
+  }
+
+  /**
+   * 逐个通知监听器：单个监听器抛异常不得影响其余监听器，也不得被当作解密失败而重试。
+   * 异常（含 async 监听器返回的 rejected promise）统一经 _error 上报。
+   */
+  private notifyListeners(key: string, plain: string, listeners?: Function[]): void {
+    for (const listener of listeners || this.listeners(key)) {
+      if (this.isClose || this.listeners(key).indexOf(listener) < 0) {
+        continue;
+      }
+      try {
+        const ret: any = listener(plain);
+        if (ret && typeof ret.then === 'function') {
+          ret.then(undefined, (err: Error) => this._error(err));
+        }
+      } catch (err) {
+        this._error(err);
+      }
+    }
+  }
+
+  /**
+   * 解密失败的通知留作待投递工作，按有界指数退避重试已拉取到的内容。
+   * md5 已更新为密文版本，长轮询不会再探到这条配置；不重试就等于 KMS 恢复后永久丢值。
+   */
+  private scheduleDeliveryRetry(key: string, item: any): void {
+    if (this.deliveryRetryTimers.has(key)) {
+      return;
+    }
+    item.deliveryRetryAttempts = (item.deliveryRetryAttempts || 0) + 1;
+    const delayMs = Math.min(
+      this.deliveryRetryBaseMs * Math.pow(2, item.deliveryRetryAttempts - 1),
+      this.deliveryRetryMaxMs);
+    const timer = setTimeout(() => {
+      this.deliveryRetryTimers.delete(key);
+      if (this.isClose || this.subscriptions.get(key) !== item) {
+        return;
+      }
+      this.enqueueDelivery(key, item);
+    }, delayMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    this.deliveryRetryTimers.set(key, timer);
+  }
+
+  private clearDeliveryRetry(key: string): void {
+    const timer = this.deliveryRetryTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.deliveryRetryTimers.delete(key);
     }
   }
 
@@ -285,6 +464,8 @@ export class ClientWorker extends Base implements IClientWorker {
         if (item.useFailover) {
           item.useFailover = false;
           item.failoverVersion = null;
+          // 不清 item.isFailover：item.content 此刻仍是容灾明文，要等 syncConfigs 用服务端值
+          // 覆盖后（连同 encryptedDataKey）才失效；提前清掉会让新订阅者把明文当密文送去解密。
           this.debug('[failover-change] failover file deleted, dataId: %s, group: %s', item.dataId, item.group);
         }
         continue;
@@ -302,9 +483,12 @@ export class ClientWorker extends Base implements IClientWorker {
         if (item.md5 !== md5) {
           item.md5 = md5;
           item.content = content;
+          item.isFailover = true;
           this.debug('[failover-change] failover file %s, dataId: %s, group: %s, md5: %s',
             isNew ? 'created' : 'changed', item.dataId, item.group, md5);
-          setImmediate(() => this.emit(key, content));
+          // 走统一投递链：容灾切换与在途的服务端解密按入链顺序生效，且成功下发后同步
+          // deliveredMd5；否则删掉容灾文件、服务端值又回到原值时会被去重逻辑吞掉
+          this.enqueueDelivery(key, item);
         }
       }
     }
@@ -348,6 +532,8 @@ export class ClientWorker extends Base implements IClientWorker {
     // 没有人订阅了，从长轮询里拿掉
     if (this.listeners(key).length === 0) {
       this.subscriptions.delete(key);
+      this.clearDeliveryRetry(key);
+      this.pendingDeliveries.delete(key);
     }
     return this;
   }
@@ -430,25 +616,57 @@ export class ClientWorker extends Base implements IClientWorker {
     return null;
   }
 
+  /** 从 HTTP 响应头读取 encryptedDataKey（头名大小写不敏感）。 */
+  private readEncryptedDataKeyHeader(headers: any): string | undefined {
+    if (!headers) {
+      return undefined;
+    }
+    const target = ENCRYPTED_DATA_KEY_HEADER.toLowerCase();
+    for (const name of Object.keys(headers)) {
+      if (name.toLowerCase() === target) {
+        return headers[ name ];
+      }
+    }
+    return undefined;
+  }
+
   /**
-   * 获取配置
+   * 获取配置（内部）：返回服务端/快照中的原始内容与 encryptedDataKey，不做解密。
+   * cipher dataId 的内容为密文，缓存与长轮询 md5 均基于密文，解密只在用户边界（getConfig / 监听器）进行。
+   *
+   * 服务端 fetch、快照回退双读、content/EDK 双写或双删全部由 readConfigWithFailover
+   * 在共享快照锁（cacheDir::snapshotKey 临界区）内串行执行，同 key 并发读/写/remove
+   * 不会交错，content 与 edk 永远成对写入 / 成对删除。
    * @param {String} dataId - id of the data
    * @param {String} group - group name of the data
-   * @return {String} value or null if config exists but is empty
+   * @return {ConfigFetchResult} 原始内容与 encryptedDataKey
    */
-  async getConfig(dataId, group) {
+  private async getConfigInner(dataId, group): Promise<ConfigFetchResult> {
     this.debug('calling getConfig, dataId: %s, group: %s', dataId, group);
     const key = this.getSnapshotKeyEncoded(dataId, group);
+    const isCipher = this.cipher.isCipherDataId(dataId);
     const result = await readConfigWithFailover({
       snapshotKey: key,
+      isCipher,
       snapshot: this.snapshot,
-      fetchFromServer: () => this.httpAgent.request(this.apiRoutePath.GET, {
-        data: {
-          dataId,
-          group,
-          tenant: this.namespace,
-        },
-      }),
+      fetchFromServer: async () => {
+        // withHeaders 仅对 cipher dataId 启用，其余路径保持返回原始字符串（不改变既有行为）
+        const response = await this.httpAgent.request(this.apiRoutePath.GET, {
+          data: {
+            dataId,
+            group,
+            tenant: this.namespace,
+          },
+          withHeaders: isCipher,
+        });
+        if (isCipher) {
+          return {
+            content: response ? response.data : null,
+            encryptedDataKey: this.readEncryptedDataKeyHeader(response && response.headers),
+          };
+        }
+        return { content: response };
+      },
       readSnapshotFallback: () => this.getSnapshot(dataId, group),
       onServerError: err => this._error(err),
       clearSnapshot: async () => {
@@ -457,8 +675,24 @@ export class ClientWorker extends Base implements IClientWorker {
         await this.snapshot.delete(this.getSnapshotKeyLegacy(dataId, group));
       },
     });
-    // ClientWorker.getConfig 对外仍只返回内容，容灾来源（server/snapshot）不对外暴露
-    return result.content;
+    // 对外暴露内容与 encryptedDataKey，并保留容灾来源：failover 命中时内容为用户维护的明文，
+    // 用户边界（getConfig / 监听器）据此跳过解密，避免把明文误当 KMS 密文送去解密。
+    return { content: result.content, encryptedDataKey: result.encryptedDataKey, source: result.source };
+  }
+
+  /**
+   * 获取配置
+   * @param {String} dataId - id of the data
+   * @param {String} group - group name of the data
+   * @return {String} value or null if config exists but is empty
+   */
+  async getConfig(dataId, group) {
+    const { content, encryptedDataKey, source } = await this.getConfigInner(dataId, group);
+    if (content === null) {
+      return null;
+    }
+    // 用户边界：cipher dataId 解密后返回明文，其余原样返回；failover 明文直接透传不解密
+    return await this.cipher.decryptIfNeeded(dataId, content, encryptedDataKey, source === 'failover');
   }
 
   /**
@@ -480,13 +714,16 @@ export class ClientWorker extends Base implements IClientWorker {
    * @return {Boolean} success
    */
   async publishSingle(dataId, group, content, options?: UnitOptions) {
+    // 用户边界：cipher dataId 先加密，密文与 encryptedDataKey 一并以表单参数发布
+    const encryptResult = await this.cipher.encryptIfNeeded(dataId, content);
     const data: { [key: string]: string } = {
       dataId,
       group,
-      content,
+      content: encryptResult.content,
       tenant: this.namespace,
       type: options && options.type,
-      appName: this.appName
+      appName: this.appName,
+      ...(encryptResult.encryptedDataKey ? { [ENCRYPTED_DATA_KEY_PARAM]: encryptResult.encryptedDataKey } : {}),
     };
     // 服务端从请求头读取 casMd5（ConfigController: request.getHeader("casMd5")），
     // 放在表单参数里会被忽略，导致退化为无条件发布
@@ -541,7 +778,7 @@ export class ClientWorker extends Base implements IClientWorker {
    */
   async remove(dataId, group) {
     const encodedKey = this.getSnapshotKeyEncoded(dataId, group);
-    // 与 getConfig 共用快照锁：远端 remove + 本地清理串行，避免在途 get 晚到后复活快照
+    // 与 getConfig 共用快照锁：远端 remove + 本地清理（encoded/legacy）串行，避免在途 get 晚到后复活快照
     return await withSnapshotLock(this.snapshot, encodedKey, async () => {
       await this.httpAgent.request(this.apiRoutePath.REMOVE, {
         method: 'DELETE',
