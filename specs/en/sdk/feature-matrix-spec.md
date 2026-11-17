@@ -65,7 +65,7 @@ Update a row in the same PR that changes the capability.
 
 | Capability | Java | Node API | Node today | Target |
 | --- | --- | --- | --- | --- |
-| Register | `registerInstance` | `registerInstance` | Partial: multiple instances per service and persistent instances are wrong | 3.0 (PR4) |
+| Register | `registerInstance` | `registerInstance` | Partial: a second instance replaces the first; persistent instances register as ephemeral | 3.0 (PR4) |
 | Deregister | `deregisterInstance` | `deregisterInstance` | Partial: no persistent path; non-200 responses resolve; the local record is removed before the server confirms | 3.0 (PR4) |
 | Batch register | `batchRegisterInstance` | - | No | 3.0 (PR4) |
 | Batch deregister | `batchDeregisterInstance` | - | No | 3.0 (PR4) |
@@ -76,6 +76,9 @@ Update a row in the same PR that changes the capability.
 | List services | `getServicesOfServer` | - | No: proxy only | Not planned |
 | Subscribed services | `getSubscribeServices` | - | No | Not planned |
 | Server status | `getServerStatus` | `getServerStatus` | Yes | - |
+| Service disk cache | `ServiceInfoHolder` | Internal | No | Not planned |
+| Naming failover | `FailoverReactor` | Internal | No | Not planned |
+| Push-empty protection | `namingPushEmptyProtection` | - | No | Not planned |
 | Shutdown | `shutDown` | `close` | Yes | - |
 
 `getServicesOfServer` is a Java compatibility surface. New broad listing belongs
