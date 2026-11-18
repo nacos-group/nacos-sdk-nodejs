@@ -149,6 +149,7 @@ defines what Config does with those signals.
 | --- | --- |
 | Disconnect | Mark every entry not consistent with the server. |
 | Connect | Send a batch listen for every entry not using failover, with its current `md5`. |
+| Connect or periodic check, effective record unknown | Query the entry directly. A listen cannot reveal the value when the entry has no `md5` to compare. |
 | Periodic check, every 5 seconds | Check failover files. Send a batch listen for entries that are not consistent. |
 | Full sync, every 3 minutes | Send a batch listen for every entry not using failover. |
 | `ConfigChangeNotifyRequest` | Mark the entry not consistent and query it. A push carries identity, not content. |
@@ -320,14 +321,38 @@ callback starts for it.
 
 ### 9.5 First Delivery
 
-A new listener has no `deliveredMd5`, so it is due as soon as the record is known. It receives
-the current value without waiting for a change. If the config is missing, that value is
-`null`. If the first query fails, the record stays unknown and the listener is not called.
+A new listener has no `deliveredMd5`, so it is due as soon as the record is known. Adding a
+listener never disturbs the progress of other listeners.
 
-This keeps the 2.6.x behavior. It differs from Java, where `addListener` starts from the
-cached `md5`, and `getConfigAndSignListener` covers the initial read.
+When the first listener creates the entry, the effective record is seeded through the same
+source-selection path as `getConfig` (section 4), not by a bare server query. The selected
+record is then delivered by the Delivery Rule.
 
-Adding a listener never disturbs the progress of other listeners.
+| Situation when the entry is created | Effective record | Filter | First callback | `localRead` |
+| --- | --- | --- | --- | --- |
+| Failover file exists | Failover content | Runs | Once, with the failover content | Emitted |
+| No failover, server returns a value or an empty string | The server value | Runs | Once, with that value | Not emitted |
+| No failover, server confirms the config is missing | `null` | Does not run | Once, with `null` | Not emitted |
+| No failover, network fails, snapshot present | The snapshot | Runs | Once, with the snapshot | Emitted |
+| No failover, network fails, no snapshot | Unknown | Does not run | Not called; the failure goes to `error` | Not emitted |
+| 401 or 403, snapshot present | Unknown; the snapshot is not used | Does not run | Not called; the failure goes to `error` | Not emitted |
+| 401 or 403, failover file present | Failover content | Runs | Once, with the failover content | Emitted |
+
+`localRead` is emitted for the seeding read, not once per listener. A listener added later to
+an entry that already has a record receives that record without a new read.
+
+A confirmed missing config and an unknown record are different. `null` means the server
+confirmed absence. Unknown means no source produced a value, so the listener waits.
+
+After the server recovers, an entry whose record is unknown is queried directly by the
+connect and periodic sync paths (section 6); it is not left to change detection alone. The
+first successful query commits a version and delivers the first callback. An entry that was
+served from a snapshot re-queries the server, and the Delivery Rule delivers the server value
+when it differs.
+
+This keeps the 2.6.x behavior of delivering the current value at once. It differs from Java,
+where `addListener` starts from the cached `md5`, and `getConfigAndSignListener` covers the
+initial read.
 
 ### 9.6 Deletion And Empty Content
 
