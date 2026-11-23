@@ -28,6 +28,7 @@ import {
   NamingTransport,
 } from '../interface';
 import { SERVICE_INFO_SPLITER, DEFAULT_GROUP } from '../const';
+import { getGroupedName } from '../utils';
 
 function splitGroupedName(nameWithGroup: string): { serviceName: string; groupName: string } {
   if (nameWithGroup.includes(SERVICE_INFO_SPLITER)) {
@@ -35,6 +36,16 @@ function splitGroupedName(nameWithGroup: string): { serviceName: string; groupNa
     return { groupName: parts[0], serviceName: parts[1] };
   }
   return { groupName: DEFAULT_GROUP, serviceName: nameWithGroup };
+}
+
+// gRPC responses carry the plain service name and the group separately, while
+// HostReactor keys the cache by the grouped name.
+function groupedViewName(si: any, fallbackServiceName: string, fallbackGroupName: string): string {
+  const serviceName = si.name || fallbackServiceName;
+  if (!serviceName || serviceName.includes(SERVICE_INFO_SPLITER)) {
+    return serviceName;
+  }
+  return getGroupedName(serviceName, si.groupName || fallbackGroupName || DEFAULT_GROUP);
 }
 
 export class GrpcNamingProxy extends Base implements NamingTransport {
@@ -188,10 +199,11 @@ export class GrpcNamingProxy extends Base implements NamingTransport {
     // Extract serviceInfo from QueryServiceResponse and return as JSON string
     // HostReactor.processServiceJSON expects flat structure with hosts at top level
     const si = response.serviceInfo || {};
+    const name = groupedViewName(si, svc, grp);
     return JSON.stringify({
-      name: si.name || serviceName,
-      dom: si.name || serviceName,
-      groupName: si.groupName || '',
+      name,
+      dom: name,
+      groupName: si.groupName || grp,
       clusters: si.clusters || clusters,
       cacheMillis: si.cacheMillis || 10000,
       hosts: si.hosts || [],
@@ -246,9 +258,10 @@ export class GrpcNamingProxy extends Base implements NamingTransport {
     this._activeSubscriptions.set(key, { serviceName, groupName: grp, clusters });
 
     const si = response.serviceInfo || {};
+    const name = groupedViewName(si, svc, grp);
     return JSON.stringify({
-      name: si.name || svc,
-      dom: si.name || svc,
+      name,
+      dom: name,
       groupName: si.groupName || grp,
       clusters: si.clusters || clusters,
       cacheMillis: si.cacheMillis || 10000,
@@ -282,10 +295,11 @@ export class GrpcNamingProxy extends Base implements NamingTransport {
       'NotifySubscriberRequest',
       (request: any) => {
         const si = request.serviceInfo || {};
+        const name = groupedViewName(si, '', '');
         const json = JSON.stringify({
-          name: si.name || '',
-          dom: si.name || '',
-          groupName: si.groupName || '',
+          name,
+          dom: name,
+          groupName: si.groupName || DEFAULT_GROUP,
           clusters: si.clusters || '',
           cacheMillis: si.cacheMillis || 10000,
           hosts: si.hosts || [],

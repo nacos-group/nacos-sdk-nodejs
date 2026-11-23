@@ -136,6 +136,8 @@ file. **Plan** applies to the toolchain migration.
 | `packages/nacos-config/test/snapshot.test.ts` | No | CFG-05 | Run in CI. |
 | `packages/nacos-config/test/utils.test.ts` | Yes | - | Keep. |
 | `packages/nacos-naming/test/naming/client.test.ts` | No | - | Review. |
+| `packages/nacos-naming/test/naming/client_grpc.test.ts` | Yes | NAM-01, NAM-02, NAM-03 | New public-client gRPC integration test. |
+| `packages/nacos-naming/test/naming/grpc_default_parameters.test.ts` | Yes | NAM-01, NAM-02 | New. Grouped-name normalization without a server. |
 | `packages/nacos-naming/test/naming/grpc_proxy.test.ts` | Yes | LC-02 | Replace with public client tests. |
 | `packages/nacos-naming/test/naming/host_reactor.test.ts` | No | - | Remove with `HostReactor`. |
 | `packages/nacos-naming/test/naming/instance.test.ts` | Yes | - | Keep. |

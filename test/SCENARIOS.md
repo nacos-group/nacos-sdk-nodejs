@@ -220,8 +220,8 @@ These are plugin tests. The pipeline itself is tested with stub filters in CFG-5
 
 | ID | Scenario | Expected | Layer | Gate | Rule | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| NAM-01 | Register, then discover with default parameters | The instance is returned. | I | beta | Naming 1 | Pending |
-| NAM-02 | Subscribe with default parameters | The listener receives the instance. | I | beta | Naming 1 | Pending |
+| NAM-01 | Register, then discover with default parameters | The instance is returned. | I | beta | Naming 1 | Covered |
+| NAM-02 | Subscribe with default parameters | The listener receives the instance. | I | beta | Naming 1 | Covered |
 | NAM-03 | `selectInstances`, `selectOneHealthyInstance` | Filter by health, enabled state, and weight. | U, I | beta | Naming 3 | Partial |
 | NAM-04 | `subscribe: false` | Queries the server, and leaves the cache unchanged. | U | rc | Naming 3 | Pending |
 | NAM-05 | Discovery fails, nothing cached | Rejects. | U | rc | Naming 3 | Pending |
