@@ -407,6 +407,14 @@ Please let us know how can we help. Do check out [issues](https://github.com/nac
 
 PR is welcome.
 
+## Contributing
+
+We welcome contributions of all kinds. Read [CONTRIBUTING.md](./CONTRIBUTING.md) (or [中文](./CONTRIBUTING_zh.md)) before you start.
+
+- Look for issues labelled `good first issue` or `help wanted`.
+- Check the roadmap in [#162](https://github.com/nacos-group/nacos-sdk-nodejs/issues/162).
+- Claim an issue by commenting `/assign`; release it with `/unassign`.
+
 ## License
 
 [Apache License V2](LICENSE)

@@ -29,6 +29,8 @@ This file provides guidance to AI coding agents (Claude Code, Cursor, GitHub Cop
   ```
   Assisted-by: Claude Code
   ```
+- **Human contributors:** see [CONTRIBUTING.md](./CONTRIBUTING.md) for the contributor guide.
+- **Do not claim issues on a human's behalf.** `/assign` is a human action; an AI agent must not post it.
 
 ## Repository Overview
 
