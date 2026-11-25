@@ -36,6 +36,15 @@ function splitGroupedName(nameWithGroup: string): { serviceName: string; groupNa
   }
   return { groupName: DEFAULT_GROUP, serviceName: nameWithGroup };
 }
+function toGroupedServiceName(name: string, groupName: string): string {
+    if (!name) {
+        return '';
+    }
+  if (name.includes(SERVICE_INFO_SPLITER)) {
+      return name;
+  }
+  return `${groupName || DEFAULT_GROUP}${SERVICE_INFO_SPLITER}${name}`;
+}
 
 export class GrpcNamingProxy extends Base implements NamingTransport {
   private _transportClient: GrpcTransportClient;
@@ -189,8 +198,8 @@ export class GrpcNamingProxy extends Base implements NamingTransport {
     // HostReactor.processServiceJSON expects flat structure with hosts at top level
     const si = response.serviceInfo || {};
     return JSON.stringify({
-      name: si.name || serviceName,
-      dom: si.name || serviceName,
+      name: toGroupedServiceName(si.name || svc, si.groupName || grp),
+      dom: toGroupedServiceName(si.name || svc, si.groupName || grp),
       groupName: si.groupName || '',
       clusters: si.clusters || clusters,
       cacheMillis: si.cacheMillis || 10000,
@@ -247,8 +256,8 @@ export class GrpcNamingProxy extends Base implements NamingTransport {
 
     const si = response.serviceInfo || {};
     return JSON.stringify({
-      name: si.name || svc,
-      dom: si.name || svc,
+      name: toGroupedServiceName(si.name || svc, si.groupName || grp),
+      dom: toGroupedServiceName(si.name || svc, si.groupName || grp),
       groupName: si.groupName || grp,
       clusters: si.clusters || clusters,
       cacheMillis: si.cacheMillis || 10000,
@@ -283,8 +292,8 @@ export class GrpcNamingProxy extends Base implements NamingTransport {
       (request: any) => {
         const si = request.serviceInfo || {};
         const json = JSON.stringify({
-          name: si.name || '',
-          dom: si.name || '',
+          name: toGroupedServiceName(si.name || '', si.groupName || ''),
+          dom: toGroupedServiceName(si.name || '', si.groupName || ''),
           groupName: si.groupName || '',
           clusters: si.clusters || '',
           cacheMillis: si.cacheMillis || 10000,
