@@ -118,12 +118,16 @@ describe('test/naming/grpc_default_parameters.test.ts', () => {
     assert(received.dom === 'DEFAULT_GROUP@@nodejs.test.svc', `unexpected dom: ${received.dom}`);
   });
 
-  it('should use one cache key for default gRPC parameters', () => {
+  it('should use one cache key for default gRPC parameters', async () => {
     const serverProxy = { ready: async () => { /* noop */ } };
     const grpc = new HostReactor({ logger, serverProxy, transport: 'grpc' });
-    assert.strictEqual(grpc._getKey({ serviceName: 'DEFAULT_GROUP@@svc', clusters: '' }), 'DEFAULT_GROUP@@svc');
-
-    const http = new HostReactor({ logger, serverProxy, transport: 'http' });
-    assert.strictEqual(http._getKey({ serviceName: 'DEFAULT_GROUP@@svc', clusters: '' }), 'DEFAULT_GROUP@@svc@@DEFAULT');
+    // No UDP receiver here: the cache-key case stays free of network handles.
+    const http = new HostReactor({ logger, serverProxy, transport: 'http', pushReceiver: false });
+    try {
+      assert.strictEqual(grpc._getKey({ serviceName: 'DEFAULT_GROUP@@svc', clusters: '' }), 'DEFAULT_GROUP@@svc');
+      assert.strictEqual(http._getKey({ serviceName: 'DEFAULT_GROUP@@svc', clusters: '' }), 'DEFAULT_GROUP@@svc@@DEFAULT');
+    } finally {
+      await Promise.all([grpc.close(), http.close()]);
+    }
   });
 });

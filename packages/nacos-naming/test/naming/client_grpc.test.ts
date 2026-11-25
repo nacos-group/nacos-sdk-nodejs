@@ -15,11 +15,23 @@
  * limitations under the License.
  */
 
+// End-to-end coverage for #167 with the public client. These tests use the admin
+// identity as a fixture; ordinary-user identities and the wider server matrix stay in
+// #168/#170, and the remote subscribe/unsubscribe, ACK and redo lifecycle stays in #171.
+
 import * as assert from 'assert';
+import * as crypto from 'crypto';
 import { NacosNamingClient } from '../../src/naming/client';
 
 const logger = console;
-const serviceName = 'nodejs.client.grpc.' + process.versions.node;
+const NACOS_HOST = process.env.NACOS_HOST || '127.0.0.1';
+const NACOS_PORT = process.env.NACOS_PORT || '8848';
+const NACOS_USERNAME = process.env.NACOS_USERNAME || 'nacos';
+const NACOS_PASSWORD = process.env.NACOS_PASSWORD || 'nacos';
+
+function uniqueServiceName(prefix: string): string {
+  return `nodejs.${prefix}.${process.pid}.${crypto.randomBytes(4).toString('hex')}`;
+}
 
 async function waitUntil(check: () => Promise<boolean> | boolean, timeout = 20000, interval = 200): Promise<void> {
   const deadline = Date.now() + timeout;
@@ -40,55 +52,63 @@ describe('test/naming/client_grpc.test.ts', () => {
   before(async () => {
     client = new NacosNamingClient({
       logger,
-      serverList: '127.0.0.1:8848',
-      username: 'nacos',
-      password: 'nacos',
+      serverList: `${NACOS_HOST}:${NACOS_PORT}`,
+      username: NACOS_USERNAME,
+      password: NACOS_PASSWORD,
     });
     await client.ready();
   });
 
   after(async () => {
-    await client.close();
+    if (client) {
+      await client.close();
+    }
   });
 
-  it('should discover and subscribe with default parameters over gRPC', async function() {
+  it('[NAM-01][NAM-02][NAM-03] should discover, select and subscribe with default parameters over gRPC', async function() {
     this.timeout(60000);
+    const serviceName = uniqueServiceName('grpc.discover');
     const first = { ip: '10.0.0.1', port: 8848 };
     await client.registerInstance(serviceName, first);
+    try {
+      let hosts: any[] = [];
+      await waitUntil(async () => {
+        hosts = await client.getAllInstances(serviceName);
+        return hasHost(hosts, first.ip);
+      });
+      assert(hasHost(hosts, first.ip), `getAllInstances should return the instance, got: ${JSON.stringify(hosts)}`);
 
-    let hosts: any[] = [];
-    await waitUntil(async () => {
-      hosts = await client.getAllInstances(serviceName);
-      return hasHost(hosts, first.ip);
-    });
-    assert(hasHost(hosts, first.ip), `getAllInstances should return the instance, got: ${JSON.stringify(hosts)}`);
+      const selected = await client.selectInstances(serviceName);
+      assert(hasHost(selected, first.ip), `selectInstances should return the instance, got: ${JSON.stringify(selected)}`);
 
-    const selected = await client.selectInstances(serviceName);
-    assert(hasHost(selected, first.ip), `selectInstances should return the instance, got: ${JSON.stringify(selected)}`);
+      const one = await client.selectOneHealthyInstance(serviceName);
+      assert(one && one.ip === first.ip, `selectOneHealthyInstance should return the instance, got: ${JSON.stringify(one)}`);
 
-    const one = await client.selectOneHealthyInstance(serviceName);
-    assert(one && one.ip === first.ip, `selectOneHealthyInstance should return the instance, got: ${JSON.stringify(one)}`);
-
-    const deliveries: any[][] = [];
-    client.subscribe(serviceName, delivered => deliveries.push(delivered));
-    await waitUntil(() => deliveries.some(delivered => hasHost(delivered, first.ip)));
-    client.unSubscribe(serviceName);
-
-    await client.deregisterInstance(serviceName, first);
+      const deliveries: any[][] = [];
+      try {
+        client.subscribe(serviceName, delivered => deliveries.push(delivered));
+        await waitUntil(() => deliveries.some(delivered => hasHost(delivered, first.ip)));
+      } finally {
+        client.unSubscribe(serviceName);
+      }
+    } finally {
+      await client.deregisterInstance(serviceName, first);
+    }
   });
 
-  it('should keep groups apart', async function() {
+  it('[NAM-01] should keep groups apart', async function() {
     this.timeout(60000);
-    const groupedService = serviceName + '.grouped';
+    const serviceName = uniqueServiceName('grpc.grouped');
     const instance = { ip: '10.0.0.2', port: 8848 };
-    await client.registerInstance(groupedService, instance, 'GROUP_A');
+    await client.registerInstance(serviceName, instance, 'GROUP_A');
+    try {
+      await waitUntil(async () => hasHost(await client.getAllInstances(serviceName, 'GROUP_A'), instance.ip));
 
-    await waitUntil(async () => hasHost(await client.getAllInstances(groupedService, 'GROUP_A'), '10.0.0.2'));
-
-    const defaultGroupHosts = await client.getAllInstances(groupedService);
-    assert(!hasHost(defaultGroupHosts, '10.0.0.2'),
-      `the default group must not return the GROUP_A instance, got: ${JSON.stringify(defaultGroupHosts)}`);
-
-    await client.deregisterInstance(groupedService, instance, 'GROUP_A');
+      const defaultGroupHosts = await client.getAllInstances(serviceName);
+      assert(!hasHost(defaultGroupHosts, instance.ip),
+        `the default group must not return the GROUP_A instance, got: ${JSON.stringify(defaultGroupHosts)}`);
+    } finally {
+      await client.deregisterInstance(serviceName, instance, 'GROUP_A');
+    }
   });
 });

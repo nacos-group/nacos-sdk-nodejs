@@ -63,7 +63,8 @@ export class HostReactor extends Base {
     this._serviceInfoMap = new Map();
     this._updatingSet = new Set();
     this._futureMap = new Map();
-    this._pushReceiver = options.transport === 'grpc' ? null : new PushReceiver(this);
+    // HTTP reactors open a UDP socket; `pushReceiver: false` keeps unit tests off the network.
+    this._pushReceiver = options.transport === 'grpc' || options.pushReceiver === false ? null : new PushReceiver(this);
   }
 
   get logger(): any {
