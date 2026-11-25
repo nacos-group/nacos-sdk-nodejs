@@ -16,7 +16,6 @@
  */
 
 import * as assert from 'assert';
-import * as http from 'http';
 import * as mm from 'mm';
 import { NamingProxy } from '../../src/naming/proxy';
 import { Instance } from '../../src/naming/instance';
@@ -199,41 +198,40 @@ describe('test/naming/proxy.test.js', () => {
   });
 
   describe('endpoint', () => {
-    let server: http.Server;
-    before(done => {
-      server = http.createServer((req, res) => {
-        res.writeHead(200, { 'Content-Type': 'application/text' });
-        res.end('127.0.0.1:8848');
-      });
-      server.listen(8849, done);
-    });
-    after(done => {
-      server.once('close', done);
-      server.close();
-    });
-
     it('should get serverList from endpoint', async () => {
+      let calls = 0;
+      const httpclient = {
+        request: async () => {
+          calls++;
+          return { status: 200, data: calls === 1 ? '127.0.0.1:8848' : '127.0.0.2:8848' };
+        },
+      };
+      // A fake clock keeps the refresh interval check deterministic in CI.
+      let now = 1000000;
+      mm(Date, 'now', () => now);
+
       const proxy = new NamingProxy({
         logger,
         endpoint: '127.0.0.1:8849',
+        httpclient,
         vipSrvRefInterMillis: 5000,
       });
       await proxy.ready();
 
       assert((proxy as any).serverList && (proxy as any).serverList.length === 0);
-      assert((proxy as any).serversFromEndpoint && (proxy as any).serversFromEndpoint.length === 1);
+      assert.deepEqual((proxy as any).serversFromEndpoint, ['127.0.0.1:8848']);
+      assert((proxy as any).lastSrvRefTime === now);
+      assert.strictEqual(calls, 1);
 
-      assert((proxy as any).lastSrvRefTime > 0);
-
-      const isHealthy = await proxy.serverHealthy();
-      assert(isHealthy);
-
-      await sleep(6000);
-
-      const lastSrvRefTime = (proxy as any).lastSrvRefTime;
-      assert(Date.now() - lastSrvRefTime < 5000);
+      now += 4999;
       await (proxy as any)._refreshSrvIfNeed();
-      assert((proxy as any).lastSrvRefTime === lastSrvRefTime);
+      assert.strictEqual(calls, 1, 'the server list should not refresh before the interval elapses');
+
+      now += 1;
+      await (proxy as any)._refreshSrvIfNeed();
+      assert.strictEqual(calls, 2, 'the server list should refresh once the interval has elapsed');
+      assert.deepEqual((proxy as any).serversFromEndpoint, ['127.0.0.2:8848']);
+      assert((proxy as any).lastSrvRefTime === now);
 
       await proxy.close();
     });
