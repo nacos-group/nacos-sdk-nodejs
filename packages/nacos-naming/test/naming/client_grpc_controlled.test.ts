@@ -115,7 +115,7 @@ describe('test/naming/client_grpc_controlled.test.ts', () => {
   let connection: any;
 
   function push(serviceName: string, groupName: string, hosts: any[], alreadyGrouped = false): any {
-    server.update(serviceName, groupName, hosts);
+    // Leave the query fixture at its previous value: a passing poll must not stand in for push delivery.
     const handler = connection.serverPushHandlers.get('NotifySubscriberRequest');
     assert(handler, 'the public client should register a push handler');
     return handler({
