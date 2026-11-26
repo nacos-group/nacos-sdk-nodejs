@@ -63,7 +63,8 @@ export class HostReactor extends Base {
     this._serviceInfoMap = new Map();
     this._updatingSet = new Set();
     this._futureMap = new Map();
-    this._pushReceiver = options.transport === 'grpc' ? null : new PushReceiver(this);
+    // HTTP reactors open a UDP socket; `pushReceiver: false` keeps unit tests off the network.
+    this._pushReceiver = options.transport === 'grpc' || options.pushReceiver === false ? null : new PushReceiver(this);
   }
 
   get logger(): any {
@@ -165,9 +166,18 @@ export class HostReactor extends Base {
     return serviceInfo;
   }
 
+  /**
+   * HTTP keeps its 2.6.x default cluster. gRPC subscriptions carry no cluster
+   * filter, so the empty value is used for both discovery and subscribe, which
+   * keeps one cache key for the default parameters.
+   */
+  private _defaultClusters(): string {
+    return this.options.transport === 'grpc' ? '' : NAMING_DEFAULT_CLUSTER_NAME;
+  }
+
   _getKey(param: { serviceName: string; clusters?: string }): string {
     const serviceName = param.serviceName;
-    const clusters = param.clusters || NAMING_DEFAULT_CLUSTER_NAME;
+    const clusters = param.clusters || this._defaultClusters();
     return ServiceInfo.getKey(serviceName, clusters);
   }
 
@@ -177,7 +187,7 @@ export class HostReactor extends Base {
     if (serviceInfo) {
       setImmediate(() => { listener(serviceInfo.hosts); });
     } else {
-      this.getServiceInfo(param.serviceName, param.clusters || NAMING_DEFAULT_CLUSTER_NAME);
+      this.getServiceInfo(param.serviceName, param.clusters || this._defaultClusters());
     }
     this.on(key + '_changed', listener);
   }
@@ -191,7 +201,7 @@ export class HostReactor extends Base {
     }
   }
 
-  async getServiceInfoDirectlyFromServer(serviceName: string, clusters: string = NAMING_DEFAULT_CLUSTER_NAME): Promise<ServiceInfo | null> {
+  async getServiceInfoDirectlyFromServer(serviceName: string, clusters: string = this._defaultClusters()): Promise<ServiceInfo | null> {
     const result = await this.serverProxy.queryList(serviceName, clusters, 0, false);
     if (result) {
       return this.processServiceJSON(result) || null;
@@ -199,7 +209,7 @@ export class HostReactor extends Base {
     return null;
   }
 
-  async getServiceInfo(serviceName: string, clusters: string = NAMING_DEFAULT_CLUSTER_NAME): Promise<ServiceInfo | undefined> {
+  async getServiceInfo(serviceName: string, clusters: string = this._defaultClusters()): Promise<ServiceInfo | undefined> {
     const key = ServiceInfo.getKey(serviceName, clusters);
     // TODO: failover
 

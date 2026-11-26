@@ -218,10 +218,16 @@ These are plugin tests. The pipeline itself is tested with stub filters in CFG-5
 
 ## Naming
 
+Remote subscribe/unsubscribe, push ACK and redo lifecycle for these rows stays in
+[#171](https://github.com/nacos-group/nacos-sdk-nodejs/issues/171). Ordinary-user
+identities and the wider server matrix stay in
+[#168](https://github.com/nacos-group/nacos-sdk-nodejs/issues/168) and
+[#170](https://github.com/nacos-group/nacos-sdk-nodejs/issues/170).
+
 | ID | Scenario | Expected | Layer | Gate | Rule | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| NAM-01 | Register, then discover with default parameters | The instance is returned. | I | beta | Naming 1 | Pending |
-| NAM-02 | Subscribe with default parameters | The listener receives the instance. | I | beta | Naming 1 | Pending |
+| NAM-01 | Register, then discover with default parameters | The instance is returned. | I | beta | Naming 1 | Covered |
+| NAM-02 | Subscribe with default parameters | The listener receives the instance. | I | beta | Naming 1 | Covered |
 | NAM-03 | `selectInstances`, `selectOneHealthyInstance` | Filter by health, enabled state, and weight. | U, I | beta | Naming 3 | Partial |
 | NAM-04 | `subscribe: false` | Queries the server, and leaves the cache unchanged. | U | rc | Naming 3 | Pending |
 | NAM-05 | Discovery fails, nothing cached | Rejects. | U | rc | Naming 3 | Pending |
@@ -252,10 +258,10 @@ These are plugin tests. The pipeline itself is tested with stub filters in CFG-5
 | NAM-32 | No polling on gRPC | No periodic query. | U | rc | Naming 4 | Pending |
 | NAM-40 | Two listeners on one service | One server subscription. | U | rc | Naming 5 | Pending |
 | NAM-41 | Last listener removed | One unsubscribe request. | U | rc | Naming 5 | Pending |
-| NAM-42 | New listener | Receives the current view once, including an empty one. | U | rc | Naming 5 | Pending |
+| NAM-42 | New listener | Receives the current view once, including an empty one. | U | rc | Naming 5 | Partial |
 | NAM-43 | Other cluster changes | A filtered listener is not called. | U | rc | Naming 5 | Pending |
 | NAM-44 | Listener throws | Others still run, the ACK is still sent, the cache is not rolled back, and there is no retry. | U | rc | Naming 5 | Pending |
-| NAM-45 | After `unSubscribe` or `close()` | The listener is not called. | U | rc | Naming 5 | Pending |
+| NAM-45 | After `unSubscribe` or `close()` | The listener is not called. | U | rc | Naming 5 | Partial |
 | NAM-46 | Subscribe request fails | `error` is emitted, and redo retries. | U | rc | Naming 5 | Pending |
 | NAM-50 | Reconnect with instances and subscriptions | All are restored. | U, R | rc | Naming 6 | Pending |
 | NAM-51 | Late response from an old connection | The record stays unregistered, and redo runs. | U | rc | Naming 6.1 | Pending |
@@ -273,7 +279,7 @@ These are plugin tests. The pipeline itself is tested with stub filters in CFG-5
 | NAM-63 | Resubscription fails | With a cached view the allowed view is returned; with no cache the call rejects. Both keep the recovery intent and see new data after recovery. | U, R | rc | Naming 3, 5 | Pending |
 | NAM-64 | Multiple cluster-filtered listeners | One server subscription; removing one listener keeps the others subscribed and notified. | U | rc | Naming 5 | Pending |
 | NAM-65 | `subscribe: false` | Queries the server without creating a lasting subscription and without disturbing an existing listener subscription. | U | rc | Naming 3 | Pending |
-| NAM-66 | Normal valid push | The view is accepted, the cache is updated, notification is scheduled, and the outbound `NotifySubscriberResponse` is observed with its type, request ID, and result. Encoding is checked with a fixed vector. | U, W, I | rc | Naming 4.1, 5 | Pending |
+| NAM-66 | Normal valid push | The view is accepted, the cache is updated, notification is scheduled, and the outbound `NotifySubscriberResponse` is observed with its type, request ID, and result. Encoding is checked with a fixed vector. | U, W, I | rc | Naming 4.1, 5 | Partial |
 | NAM-67 | Listener returns a pending Promise | The ACK is sent and the accepted cache is readable while the Promise is unsettled. Later settle or reject does not change or repeat that ACK. | U | rc | Naming 5 | Pending |
 | NAM-68 | Listener throws or rejects | The ACK is sent, the failure goes to `error`, the accepted cache is not rolled back, and Config-style retry is not introduced. | U | rc | Naming 5 | Pending |
 | NAM-69 | Duplicate push, malformed view, stale epoch, push after unsubscribe | Each case follows section 4.1; a decoded view gets a success ACK, and no removed listener starts a new callback. | U | rc | Naming 4.1, 5 | Pending |
