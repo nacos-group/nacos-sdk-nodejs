@@ -45,9 +45,10 @@ export class NacosConfigClient extends APIClientBase implements BaseClient {
   }
 
   get clusterOptions() {
-    const host = this.options.endpoint;
+    const host = this.options.endpoint || this.options.serverAddr;
+    const namespace = this.options.namespace || '';
     return {
-      name: `DiamondClient@${host}`,
+      name: `DiamondClient@${host}#${namespace}`,
     };
   }
 
