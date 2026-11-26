@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Roadmap
+    url: https://github.com/nacos-group/nacos-sdk-nodejs/issues/162
+    about: Check the 3.x roadmap before opening a feature request.
+  - name: Security Vulnerabilities
+    url: https://security.alibaba.com
+    about: Report security vulnerabilities to ASRC.
